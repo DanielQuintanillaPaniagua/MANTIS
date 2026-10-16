@@ -16,6 +16,10 @@ dependencies = [
 dev = [
     "pytest>=8.0",
 ]
+lab = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
