@@ -93,7 +93,7 @@ def test_admin_approves_submitted_invoice(client):
     )
     assert response.status_code == 200
     assert response.json()["status"] == "approved"
-    
+
 def test_admin_can_approve_submitted_invoice_after_reset(client):
     """Sanity: the correct approve path still works with the right user and state."""
     # Reset first because other tests may have mutated invoice 2.
@@ -104,3 +104,4 @@ def test_admin_can_approve_submitted_invoice_after_reset(client):
     )
     assert response.status_code == 200
     assert response.json()["status"] == "approved"
+    
