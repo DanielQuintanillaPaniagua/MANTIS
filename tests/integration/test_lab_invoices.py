@@ -60,10 +60,7 @@ def test_employee_reads_own_invoice(client):
     assert response.json()["id"] == 1
 
 
-def test_employee_cannot_read_other_branch_invoice(client):
-    """Correct behavior: 403. In step 5 this becomes V1 (200 = vulnerability)."""
-    response = client.get("/invoices/3", headers={"X-API-Key": EMPLOYEE_KEY})
-    assert response.status_code == 403
+
 
 
 def test_get_unknown_invoice_returns_404(client):
@@ -96,19 +93,14 @@ def test_admin_approves_submitted_invoice(client):
     )
     assert response.status_code == 200
     assert response.json()["status"] == "approved"
+    
+def test_admin_can_approve_submitted_invoice_after_reset(client):
+    """Sanity: the correct approve path still works with the right user and state."""
+    # Reset first because other tests may have mutated invoice 2.
+    client.post("/lab/reset", headers={"X-API-Key": ADMIN_KEY})
 
-
-def test_employee_cannot_approve(client):
-    """Correct behavior: 403. In step 5 this becomes V2 (200 = vulnerability)."""
     response = client.post(
-        "/invoices/2/approve", headers={"X-API-Key": EMPLOYEE_KEY}
+        "/invoices/2/approve", headers={"X-API-Key": ADMIN_KEY}
     )
-    assert response.status_code == 403
-
-
-def test_admin_cannot_approve_draft(client):
-    """Correct behavior: 409. In step 5 this becomes V3 (200 = vulnerability)."""
-    response = client.post(
-        "/invoices/1/approve", headers={"X-API-Key": ADMIN_KEY}
-    )
-    assert response.status_code == 409
+    assert response.status_code == 200
+    assert response.json()["status"] == "approved"

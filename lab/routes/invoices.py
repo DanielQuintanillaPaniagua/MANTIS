@@ -1,8 +1,15 @@
-"""Invoice endpoints. Legitimate authorization. No planted vulnerability here.
+"""Invoice endpoints.
 
-This module establishes the CORRECT behavior. In step 5 (V1, V2, V3),
-we will deliberately break specific checks to plant vulnerabilities.
-That is why this file must be clear and correct now.
+MK-002 step 5: this module contains three deliberate, documented
+vulnerabilities. They are marked with V1, V2, V3 comments.
+
+The correct version lives in git: `git show HEAD~1:lab/routes/invoices.py`
+when you need to compare.
+
+Do not "fix" these without updating:
+- lab/VULNERABILITIES.md
+- tests/integration/test_lab_vulnerabilities.py
+- tests/integration/test_lab_invoices.py
 """
 
 import sqlite3
@@ -40,7 +47,10 @@ def _invoice_to_dict(inv: Invoice) -> dict:
 
 
 def _user_can_access_branch(user: User, branch_id: str) -> bool:
-    """Legitimate authorization check. Admin: all branches. Employee: own only."""
+    """Legitimate authorization check. Still used by `submit`.
+
+    Admin: all branches. Employee: own only.
+    """
     if user.role is Role.ADMIN and user.branch_id is None:
         return True
     return user.branch_id == branch_id
@@ -67,8 +77,8 @@ def list_invoices(
 ) -> list[dict]:
     """List invoices visible to the current user.
 
-    Admin: all invoices.
-    Employee: only invoices in their assigned branch.
+    NOT vulnerable. Filtering by branch is correct.
+    V1 only affects GET /invoices/{invoice_id}.
     """
     if user.role is Role.ADMIN and user.branch_id is None:
         rows = conn.execute(
@@ -91,15 +101,29 @@ def get_invoice(
     user: User = Depends(get_current_user),
     conn: sqlite3.Connection = Depends(get_db),
 ) -> dict:
-    """Return a single invoice. Object-level authorization is enforced."""
+    """Return a single invoice.
+
+    V1 — BOLA (Broken Object Level Authorization).
+
+    The object-level authorization check is MISSING on purpose.
+    Any authenticated user (admin or employee) can read ANY invoice by ID,
+    regardless of branch.
+
+    Correct behavior (in git HEAD~1):
+        if not _user_can_access_branch(user, invoice.branch_id):
+            raise HTTPException(403)
+    """
     row = _load_invoice_or_404(conn, invoice_id)
     invoice = _row_to_invoice(row)
 
-    if not _user_can_access_branch(user, invoice.branch_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You are not authorized to access this invoice",
-        )
+    # V1 — BOLA: authorization check removed on purpose.
+    # Restore the following block to fix V1:
+    #
+    # if not _user_can_access_branch(user, invoice.branch_id):
+    #     raise HTTPException(
+    #         status_code=status.HTTP_403_FORBIDDEN,
+    #         detail="You are not authorized to access this invoice",
+    #     )
 
     return _invoice_to_dict(invoice)
 
@@ -112,8 +136,8 @@ def submit_invoice(
 ) -> dict:
     """Move invoice from draft -> submitted.
 
-    - Object authorization is enforced (employee only own branch).
-    - Transition is validated (only draft can be submitted).
+    NOT vulnerable. Authorization and transition are both checked.
+    V2 and V3 only affect POST /invoices/{id}/approve.
     """
     row = _load_invoice_or_404(conn, invoice_id)
     invoice = _row_to_invoice(row)
@@ -145,17 +169,30 @@ def approve_invoice(
     user: User = Depends(get_current_user),
     conn: sqlite3.Connection = Depends(get_db),
 ) -> dict:
-    """Move invoice from submitted -> approved. Admin only.
+    """Move invoice from submitted -> approved.
 
-    - Role authorization is enforced (admin only).
-    - Object authorization is enforced (admin: all branches).
-    - Transition is validated (only submitted can be approved).
+    V2 — BFLA (Broken Function Level Authorization).
+    V3 — State skip (invalid transition).
+
+    Two checks are MISSING on purpose:
+    - V2: the role check (admin only) is gone.
+    - V3: the status check (submitted only) is gone.
+
+    Correct behavior (in git HEAD~1):
+        if user.role is not Role.ADMIN:
+            raise HTTPException(403)
+        ...
+        if invoice.status is not InvoiceStatus.SUBMITTED:
+            raise HTTPException(409)
     """
-    if user.role is not Role.ADMIN:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin can approve invoices",
-        )
+    # V2 — BFLA: role check removed on purpose.
+    # Restore the following block to fix V2:
+    #
+    # if user.role is not Role.ADMIN:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_403_FORBIDDEN,
+    #         detail="Only admin can approve invoices",
+    #     )
 
     row = _load_invoice_or_404(conn, invoice_id)
     invoice = _row_to_invoice(row)
@@ -166,11 +203,14 @@ def approve_invoice(
             detail="You are not authorized to access this invoice",
         )
 
-    if invoice.status is not InvoiceStatus.SUBMITTED:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Cannot approve invoice in status '{invoice.status.value}'",
-        )
+    # V3 — State skip: transition check removed on purpose.
+    # Restore the following block to fix V3:
+    #
+    # if invoice.status is not InvoiceStatus.SUBMITTED:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_409_CONFLICT,
+    #         detail=f"Cannot approve invoice in status '{invoice.status.value}'",
+    #     )
 
     conn.execute(
         "UPDATE invoices SET status = ? WHERE id = ?",
