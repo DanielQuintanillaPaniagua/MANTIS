@@ -1,5 +1,9 @@
 """Verify that the lab seed is deterministic and matches MK-002.md."""
 
+import sqlite3
+
+import pytest
+
 from lab.database import get_connection, reset_db
 from lab.seed import BRANCHES, INVOICES, USERS, apply_seed
 
@@ -22,7 +26,10 @@ def test_seed_inserts_two_users():
     rows = conn.execute(
         "SELECT id, username, role, api_key, branch_id FROM users ORDER BY id"
     ).fetchall()
-    assert [(r["id"], r["username"], r["role"], r["api_key"], r["branch_id"]) for r in rows] == USERS
+    assert [
+        (r["id"], r["username"], r["role"], r["api_key"], r["branch_id"])
+        for r in rows
+    ] == USERS
 
 
 def test_seed_inserts_four_invoices():
@@ -51,24 +58,20 @@ def test_seed_is_idempotent():
 
 
 def test_invoice_status_check_rejects_invalid_value():
-    import sqlite3
-    import pytest
-
     conn = _seeded_connection()
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
-            "INSERT INTO invoices (id, number, branch_id, supplier, total_cents, status, created_at) "
+            "INSERT INTO invoices "
+            "(id, number, branch_id, supplier, total_cents, status, created_at) "
             "VALUES (99, 'FAC-099', 'S001', 'X', 100, 'invalid', '2026-01-01T00:00:00Z')"
         )
 
 
 def test_foreign_key_enforced():
-    import sqlite3
-    import pytest
-
     conn = _seeded_connection()
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
-            "INSERT INTO invoices (id, number, branch_id, supplier, total_cents, status, created_at) "
+            "INSERT INTO invoices "
+            "(id, number, branch_id, supplier, total_cents, status, created_at) "
             "VALUES (99, 'FAC-099', 'S999', 'X', 100, 'draft', '2026-01-01T00:00:00Z')"
         )
