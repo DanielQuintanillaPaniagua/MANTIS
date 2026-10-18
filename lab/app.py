@@ -3,16 +3,20 @@ This module exposes the HTTP surface of the lab. It is intentionally
 minimal at MK-002 step 1: only /health exists. Auth, database and
 vulnerable endpoints are added in later steps.
 """
-from packaging import __title__
 from fastapi import FastAPI
 
+from lab.routes import identity
+
 app = FastAPI(
-    title = "MANTIS Lab",
-    version = "1.0.0",
-    description = "Local Vulnerable API lab for automated security testing"
+    title="MANTIS Lab",
+    version="0.1.0",
+    description="Local vulnerable API lab for authorized security testing.",
 )
+
+app.include_router(identity.router)
+
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    """ Liveness probe.Public, local-onliy, no aunth."""
+    """Liveness probe. Public, local-only, no auth."""
     return {"status": "ok"}
