@@ -9,6 +9,21 @@ class MantisConfig:
     timeout_seconds: float = 5.0
     max_requests: int = 20
     requests_per_minute: int = 20
+    redacted_headers: tuple[str, ...] = (
+        "authorization",
+        "x-api-key",
+        "cookie",
+        "set-cookie",
+        "proxy-authorization",
+    )
+    redacted_query_params: tuple[str, ...] = (
+        "api_key",
+        "token",
+        "access_token",
+        "key",
+        "secret",
+        "password",
+    )
 
     def __post_init__(self) -> None:
         import math

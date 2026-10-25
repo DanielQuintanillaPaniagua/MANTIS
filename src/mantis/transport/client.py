@@ -7,11 +7,11 @@ evidence. Detection logic lives elsewhere.
 Rate limits are enforced here, not at the CLI, so that future engines
 (sequences, generation) inherit them for free.
 """
-
 from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 
@@ -117,10 +117,10 @@ class MantisClient:
             self._record_evidence(
                 timestamp=timestamp,
                 method=method,
-                url=url,
+                url=self._redact_url(url),
                 status=0,
                 duration_ms=duration_ms,
-                request_headers=headers or {},
+                request_headers=self._redact_headers(headers or {}),
                 response_headers={},
                 response_size=0,
                 error=error,
@@ -130,11 +130,11 @@ class MantisClient:
         self._record_evidence(
             timestamp=timestamp,
             method=method,
-            url=url,
+            url=self._redact_url(url),
             status=status,
             duration_ms=duration_ms,
-            request_headers=headers or {},
-            response_headers=response_headers,
+            request_headers=self._redact_headers(headers or {}),
+            response_headers=self._redact_headers(response_headers),
             response_size=response_size,
             error=error,
         )
@@ -154,6 +154,33 @@ class MantisClient:
         now = time.monotonic()
         self._minute_window.check_and_record(now)
         self._request_count += 1
+    def _redact_headers(self, headers: dict[str, str]) -> dict[str, str]:
+        """Redact sensitive header values. Case-insensitive."""
+        redacted = set(self.config.redacted_headers)
+        result: dict[str, str] = {}
+        for key, value in headers.items():
+            if key.lower() in redacted:
+                result[key] = "***REDACTED***"
+            else:
+                result[key] = value
+        return result
+
+    def _redact_url(self, url: str) -> str:
+        """Redact sensitive query parameter values."""
+        parts = urlsplit(url)
+        if not parts.query:
+            return url
+
+        sensitive = set(self.config.redacted_query_params)
+        pairs = parse_qsl(parts.query, keep_blank_values=True)
+        redacted_pairs = [
+            (k, "***REDACTED***" if k.lower() in sensitive else v)
+            for k, v in pairs
+        ]
+        new_query = urlencode(redacted_pairs)
+        return urlunsplit(
+            (parts.scheme, parts.netloc, parts.path, new_query, parts.fragment)
+        )
 
     def _record_evidence(
         self,

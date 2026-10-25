@@ -121,3 +121,76 @@ def test_timeout_passed_to_httpx():
 
     assert captured["timeout"] is not None
     assert captured["timeout"].get("connect") == 2.5
+def test_evidence_redacts_sensitive_request_headers(tmp_path: Path):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200)
+
+    log_path = tmp_path / "requests.jsonl"
+    config = MantisConfig()
+    with RequestLogWriter(log_path) as writer:
+        with MantisClient(config, log_writer=writer, transport=_mock_transport(handler)) as client:
+            client.get(
+                "http://test/x",
+                headers={
+                    "X-API-Key": "secret-key",
+                    "Authorization": "Bearer secret-token",
+                    "Accept": "application/json",
+                },
+            )
+
+    lines = log_path.read_text(encoding="utf-8").splitlines()
+    log = json.loads(lines[0])
+    assert log["request_headers"]["X-API-Key"] == "***REDACTED***"
+    assert log["request_headers"]["Authorization"] == "***REDACTED***"
+    assert log["request_headers"]["Accept"] == "application/json"
+
+
+def test_evidence_redacts_sensitive_response_headers(tmp_path: Path):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"Set-Cookie": "session=secret", "Content-Type": "application/json"},
+        )
+
+    log_path = tmp_path / "requests.jsonl"
+    config = MantisConfig()
+    with RequestLogWriter(log_path) as writer:
+        with MantisClient(config, log_writer=writer, transport=_mock_transport(handler)) as client:
+            client.get("http://test/x")
+
+    lines = log_path.read_text(encoding="utf-8").splitlines()
+    log = json.loads(lines[0])
+    assert log["response_headers"]["set-cookie"] == "***REDACTED***"
+    assert log["response_headers"]["content-type"] == "application/json"
+
+
+def test_evidence_redacts_query_params(tmp_path: Path):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200)
+
+    log_path = tmp_path / "requests.jsonl"
+    config = MantisConfig()
+    with RequestLogWriter(log_path) as writer:
+        with MantisClient(config, log_writer=writer, transport=_mock_transport(handler)) as client:
+            client.get("http://test/x?api_key=secret&page=2&token=abc")
+
+    lines = log_path.read_text(encoding="utf-8").splitlines()
+    log = json.loads(lines[0])
+    assert "secret" not in log["url"]
+    assert "abc" not in log["url"]
+    assert "page=2" in log["url"]
+
+
+def test_redaction_is_case_insensitive(tmp_path: Path):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200)
+
+    log_path = tmp_path / "requests.jsonl"
+    config = MantisConfig()
+    with RequestLogWriter(log_path) as writer:
+        with MantisClient(config, log_writer=writer, transport=_mock_transport(handler)) as client:
+            client.get("http://test/x", headers={"X-API-KEY": "secret"})
+
+    lines = log_path.read_text(encoding="utf-8").splitlines()
+    log = json.loads(lines[0])
+    assert log["request_headers"]["X-API-KEY"] == "***REDACTED***"
