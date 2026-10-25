@@ -11,8 +11,10 @@ class MantisConfig:
     requests_per_minute: int = 20
 
     def __post_init__(self) -> None:
-        if self.timeout_seconds <= 0:
-            raise ValueError("timeout_seconds must be greater than zero")
+        import math
+
+        if not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be a finite number greater than zero")
 
         if self.max_requests < 1:
             raise ValueError("max_requests must be at least 1")

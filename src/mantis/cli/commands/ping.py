@@ -75,9 +75,13 @@ def run(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=__import__("sys").stderr)
         return 2
 
-    timeout = args.timeout if args.timeout is not None else MantisConfig().timeout_seconds
-
-    config = MantisConfig(timeout_seconds=timeout)
+    try:
+        config = MantisConfig(
+            timeout_seconds=args.timeout if args.timeout is not None else 5.0
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=__import__("sys").stderr)
+        return 2
 
     log_writer: RequestLogWriter | None = None
     if not args.no_log:
@@ -87,7 +91,6 @@ def run(args: argparse.Namespace) -> int:
         with MantisClient(config, log_writer=log_writer) as client:
             response = client.get(args.url, headers=headers)
 
-        # Approximate size: len(content). For a HEAD request, we'd use headers.
         size = len(response.content)
         print(f"{response.status_code} {args.url}")
         print(f"duration: {client.last_duration_ms:.1f} ms")
