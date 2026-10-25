@@ -16,6 +16,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+class EvidenceWriteError(Exception):
+    """Raised when the evidence log cannot be written.
+
+    The request may have been executed. The caller must decide what
+    to do: it is not safe to assume nothing happened.
+    """
 
 @dataclass(frozen=True)
 class RequestLog:
@@ -71,9 +77,12 @@ class RequestLogWriter:
         self._file = self.path.open("a", encoding="utf-8")
 
     def write(self, log: RequestLog) -> None:
-        self._file.write(log.to_json_line())
-        self._file.write("\n")
-        self._file.flush()
+        try:
+            self._file.write(log.to_json_line())
+            self._file.write("\n")
+            self._file.flush()
+        except (OSError, ValueError) as exc:
+            raise EvidenceWriteError(f"Failed to write evidence: {exc}") from exc
 
     def close(self) -> None:
         self._file.close()

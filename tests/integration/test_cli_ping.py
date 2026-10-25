@@ -51,3 +51,24 @@ def test_ping_health_against_running_lab(tmp_path):
     log = json.loads(lines[0])
     assert log["method"] == "GET"
     assert log["status"] == 200
+def test_ping_with_unwritable_log_path(tmp_path):
+    # Create a file where a directory is expected
+    blocking_file = tmp_path / "not_a_dir"
+    blocking_file.write_text("x")
+
+    # Now try to use it as a log directory
+    log_path = blocking_file / "requests.jsonl"
+
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "mantis", "ping",
+            "http://127.0.0.1:8000/health",
+            "--log", str(log_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 4
+    assert "cannot open log file" in result.stderr

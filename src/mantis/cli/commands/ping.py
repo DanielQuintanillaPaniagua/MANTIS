@@ -17,7 +17,7 @@ import httpx
 
 from mantis.core.config import MantisConfig
 from mantis.transport.client import MantisClient, RateLimitExceeded
-from mantis.transport.log import RequestLogWriter
+from mantis.transport.log import EvidenceWriteError, RequestLogWriter
 from mantis.transport.policy import TargetNotAllowed
 
 
@@ -87,7 +87,14 @@ def run(args: argparse.Namespace) -> int:
 
     log_writer: RequestLogWriter | None = None
     if not args.no_log:
-        log_writer = RequestLogWriter(args.log)
+        try:
+            log_writer = RequestLogWriter(args.log)
+        except OSError as exc:
+            print(
+                f"error: cannot open log file {args.log}: {exc}",
+                file=sys.stderr,
+            )
+            return 4
 
     try:
         with MantisClient(config, log_writer=log_writer) as client:
@@ -98,6 +105,13 @@ def run(args: argparse.Namespace) -> int:
         print(f"duration: {client.last_duration_ms:.1f} ms")
         print(f"size: {size} bytes")
         return 0
+
+    except EvidenceWriteError as exc:
+        print(
+            f"error: request executed but evidence not saved: {exc}",
+            file=sys.stderr,
+        )
+        return 5
 
     except httpx.HTTPError as exc:
         print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)

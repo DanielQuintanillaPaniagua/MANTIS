@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from mantis.transport.log import RequestLog, RequestLogWriter, utc_now_iso
+import pytest
 
 
 def test_request_log_serializes_to_valid_json():
@@ -130,3 +131,20 @@ def test_utc_now_iso_format():
     assert ts[10] == "T"
     assert ts[13] == ":"
     assert ts[16] == ":"
+def test_writer_raises_evidence_write_error_on_closed_file(tmp_path: Path):
+    from mantis.transport.log import EvidenceWriteError
+
+    log_path = tmp_path / "requests.jsonl"
+    writer = RequestLogWriter(log_path)
+    writer.close()
+
+    log = RequestLog(
+        timestamp="2026-10-19T12:00:00Z",
+        method="GET",
+        url="http://127.0.0.1:8000/health",
+        status=200,
+        duration_ms=1.0,
+    )
+
+    with pytest.raises(EvidenceWriteError):
+        writer.write(log)
