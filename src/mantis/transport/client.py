@@ -17,6 +17,7 @@ import httpx
 
 from mantis.core.config import MantisConfig
 from mantis.transport.log import RequestLog, RequestLogWriter, utc_now_iso
+from mantis.transport.policy import TargetNotAllowed, TargetPolicy
 
 
 class RateLimitExceeded(Exception):
@@ -62,6 +63,7 @@ class MantisClient:
     ) -> None:
         self.config = config
         self.log_writer = log_writer
+        self.policy = TargetPolicy.from_config(config)
         self._request_count = 0
         self.last_duration_ms: float = 0.0       
         self._minute_window = _WindowCounter(
@@ -95,6 +97,7 @@ class MantisClient:
         Raises httpx.HTTPError on network failure. In both cases,
         evidence is logged before raising.
         """
+        self.policy.check(url)
         self._check_limits()
 
         started = time.perf_counter()

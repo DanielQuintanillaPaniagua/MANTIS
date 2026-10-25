@@ -24,6 +24,11 @@ class MantisConfig:
         "secret",
         "password",
     )
+    allowed_schemes: tuple[str, ...] = ("http", "https")
+    allowed_hosts: tuple[str, ...] = ("127.0.0.1", "localhost", "::1")
+    allowed_ports: tuple[int, ...] = (8000,)
+
+
 
     def __post_init__(self) -> None:
         import math
