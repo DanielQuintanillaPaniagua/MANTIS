@@ -63,6 +63,7 @@ class MantisClient:
         self.config = config
         self.log_writer = log_writer
         self._request_count = 0
+        self.last_duration_ms: float = 0.0       
         self._minute_window = _WindowCounter(
             window_seconds=60.0,
             max_in_window=config.requests_per_minute,
@@ -106,6 +107,7 @@ class MantisClient:
         try:
             response = self._client.request(method, url, headers=headers)
             duration_ms = (time.perf_counter() - started) * 1000.0
+            self.last_duration_ms = duration_ms      
             status = response.status_code
             response_size = len(response.content)
             response_headers = dict(response.headers)
