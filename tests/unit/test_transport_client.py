@@ -194,3 +194,4 @@ def test_redaction_is_case_insensitive(tmp_path: Path):
     lines = log_path.read_text(encoding="utf-8").splitlines()
     log = json.loads(lines[0])
     assert log["request_headers"]["X-API-KEY"] == "***REDACTED***"
+    
