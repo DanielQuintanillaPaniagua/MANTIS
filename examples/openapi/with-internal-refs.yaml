@@ -1,0 +1,39 @@
+openapi: 3.0.3
+info:
+  title: Spec with internal refs
+  version: 1.0.0
+paths:
+  /invoices/{id}:
+    get:
+      operationId: getInvoice
+      parameters:
+        - $ref: '#/components/parameters/InvoiceId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Invoice'
+components:
+  parameters:
+    InvoiceId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+  schemas:
+    Invoice:
+      type: object
+      required:
+        - id
+        - total_cents
+      properties:
+        id:
+          type: integer
+        total_cents:
+          type: integer
+        status:
+          type: string
+          enum: [draft, submitted, approved]
