@@ -18,6 +18,8 @@ from mantis.spec.errors import (
 from mantis.spec.loader import load_spec
 from mantis.spec.models import HttpMethod
 from mantis.spec.parser import parse_spec
+from mantis.spec.errors import SpecReferenceError
+from mantis.spec.models import ParameterLocation
 
 
 EXAMPLES = Path(__file__).parent.parent.parent / "examples" / "openapi"
@@ -164,3 +166,115 @@ def test_ignores_non_dict_path_items():
     }
     spec = parse_spec(data)
     assert spec.operations == ()
+
+def test_parses_internal_refs_in_parameters():
+    data = {
+        "openapi": "3.1.0",
+        "info": {"title": "t", "version": "1"},
+        "paths": {
+            "/invoices/{id}": {
+                "get": {
+                    "operationId": "getInvoice",
+                    "parameters": [{"$ref": "#/components/parameters/InvoiceId"}],
+                    "responses": {"200": {"description": "OK"}},
+                }
+            }
+        },
+        "components": {
+            "parameters": {
+                "InvoiceId": {
+                    "name": "id",
+                    "in": "path",
+                    "required": True,
+                    "schema": {"type": "integer"},
+                }
+            }
+        },
+    }
+    spec = parse_spec(data)
+    op = spec.operations[0]
+    assert len(op.parameters) == 1
+    assert op.parameters[0].name == "id"
+    assert op.parameters[0].location == ParameterLocation.PATH
+    assert op.parameters[0].required is True
+
+
+def test_inherits_path_level_parameters():
+    data = {
+        "openapi": "3.1.0",
+        "info": {"title": "t", "version": "1"},
+        "paths": {
+            "/invoices/{id}": {
+                "parameters": [
+                    {"name": "id", "in": "path", "schema": {"type": "integer"}}
+                ],
+                "get": {"responses": {"200": {"description": "OK"}}},
+                "post": {"responses": {"200": {"description": "OK"}}},
+            }
+        },
+    }
+    spec = parse_spec(data)
+    assert len(spec.operations) == 2
+    for op in spec.operations:
+        assert len(op.parameters) == 1
+        assert op.parameters[0].name == "id"
+        assert op.parameters[0].required is True  # path params are always required
+
+
+def test_operation_parameters_override_inherited():
+    data = {
+        "openapi": "3.1.0",
+        "info": {"title": "t", "version": "1"},
+        "paths": {
+            "/x/{id}": {
+                "parameters": [
+                    {"name": "id", "in": "path", "schema": {"type": "string"}}
+                ],
+                "get": {
+                    "parameters": [
+                        {"name": "id", "in": "path", "schema": {"type": "integer"}}
+                    ],
+                    "responses": {"200": {"description": "OK"}},
+                },
+            }
+        },
+    }
+    spec = parse_spec(data)
+    op = spec.operations[0]
+    assert len(op.parameters) == 1
+    assert op.parameters[0].schema_type == "integer"
+
+
+def test_merges_distinct_path_and_operation_parameters():
+    data = {
+        "openapi": "3.1.0",
+        "info": {"title": "t", "version": "1"},
+        "paths": {
+            "/x/{id}": {
+                "parameters": [
+                    {"name": "id", "in": "path", "schema": {"type": "integer"}}
+                ],
+                "get": {
+                    "parameters": [
+                        {"name": "q", "in": "query", "schema": {"type": "string"}}
+                    ],
+                    "responses": {"200": {"description": "OK"}},
+                },
+            }
+        },
+    }
+    spec = parse_spec(data)
+    op = spec.operations[0]
+    names = {(p.name, p.location) for p in op.parameters}
+    assert ("id", ParameterLocation.PATH) in names
+    assert ("q", ParameterLocation.QUERY) in names
+
+
+def test_rejects_external_ref_in_paths():
+    data = {
+        "openapi": "3.1.0",
+        "info": {"title": "t", "version": "1"},
+        "paths": {"/x": {"$ref": "https://example.com/x.yaml"}},
+    }
+    with pytest.raises(SpecReferenceError, match="External"):
+        parse_spec(data)

@@ -15,9 +15,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from mantis.spec.errors import SpecValidationError, SpecVersionError
-from mantis.spec.models import ApiSpec, HttpMethod, Operation
-
+from mantis.spec.errors import SpecReferenceError, SpecValidationError, SpecVersionError
+from mantis.spec.models import (
+    ApiSpec,
+    HttpMethod,
+    Operation,
+    Parameter,
+    ParameterLocation,
+)
+from mantis.spec.refs import resolve_refs
 
 _HTTP_METHODS = {
     "get": HttpMethod.GET,
@@ -46,7 +52,7 @@ def parse_spec(data: dict[str, Any]) -> ApiSpec:
     description = info.get("description")
 
     servers = _extract_servers(data.get("servers", []))
-    operations = _extract_operations(data["paths"])
+    operations = _extract_operations(data["paths"], data)
 
     return ApiSpec(
         openapi_version=version,
@@ -100,22 +106,44 @@ def _extract_servers(raw: Any) -> tuple[str, ...]:
     return tuple(urls)
 
 
-def _extract_operations(paths: dict[str, Any]) -> tuple[Operation, ...]:
+def _extract_operations(
+    paths: dict[str, Any], document: dict[str, Any]
+) -> tuple[Operation, ...]:
     operations: list[Operation] = []
-    for path, path_item in paths.items():
-        if not isinstance(path_item, dict):
+    for path, path_item_raw in paths.items():
+        if not isinstance(path_item_raw, dict):
             continue
+
+        # Resolve $refs at path level so inherited parameters are concrete
+        path_item = resolve_refs(path_item_raw, document)
+
+        path_params = _extract_parameters(path_item.get("parameters", []))
+
         for method_lower, method_enum in _HTTP_METHODS.items():
             raw_op = path_item.get(method_lower)
             if not isinstance(raw_op, dict):
                 continue
-            operations.append(_build_operation(path, method_enum, raw_op))
+            operations.append(
+                _build_operation(path, method_enum, raw_op, path_params)
+            )
     return tuple(operations)
 
 
-def _build_operation(path: str, method: HttpMethod, raw: dict[str, Any]) -> Operation:
+def _build_operation(
+    path: str,
+    method: HttpMethod,
+    raw: dict[str, Any],
+    inherited: tuple[Parameter, ...],
+) -> Operation:
     tags_raw = raw.get("tags", [])
-    tags = tuple(t for t in tags_raw if isinstance(t, str)) if isinstance(tags_raw, list) else ()
+    tags = (
+        tuple(t for t in tags_raw if isinstance(t, str))
+        if isinstance(tags_raw, list)
+        else ()
+    )
+
+    op_params = _extract_parameters(raw.get("parameters", []))
+    merged_params = _merge_parameters(inherited, op_params)
 
     return Operation(
         method=method,
@@ -124,4 +152,53 @@ def _build_operation(path: str, method: HttpMethod, raw: dict[str, Any]) -> Oper
         summary=raw.get("summary") if isinstance(raw.get("summary"), str) else None,
         description=raw.get("description") if isinstance(raw.get("description"), str) else None,
         tags=tags,
+        parameters=merged_params,
     )
+
+
+def _extract_parameters(raw_params: Any) -> tuple[Parameter, ...]:
+    if not isinstance(raw_params, list):
+        return ()
+    result: list[Parameter] = []
+    for raw in raw_params:
+        if not isinstance(raw, dict):
+            continue
+        name = raw.get("name")
+        loc = raw.get("in")
+        if not isinstance(name, str) or not isinstance(loc, str):
+            continue
+        try:
+            location = ParameterLocation(loc)
+        except ValueError:
+            continue  # unknown location, skip
+
+        schema = raw.get("schema") if isinstance(raw.get("schema"), dict) else {}
+
+        result.append(
+            Parameter(
+                name=name,
+                location=location,
+                required=bool(raw.get("required", location == ParameterLocation.PATH)),
+                schema_type=schema.get("type") if isinstance(schema.get("type"), str) else None,
+                schema_format=schema.get("format") if isinstance(schema.get("format"), str) else None,
+                description=raw.get("description") if isinstance(raw.get("description"), str) else None,
+            )
+        )
+    return tuple(result)
+
+
+def _merge_parameters(
+    inherited: tuple[Parameter, ...],
+    operation: tuple[Parameter, ...],
+) -> tuple[Parameter, ...]:
+    """Merge inherited (path-level) with operation-level params.
+
+    Operation params override inherited ones on (name, location).
+    """
+    key = lambda p: (p.name, p.location)
+    merged: dict[tuple[str, ParameterLocation], Parameter] = {
+        key(p): p for p in inherited
+    }
+    for p in operation:
+        merged[key(p)] = p
+    return tuple(merged.values())
