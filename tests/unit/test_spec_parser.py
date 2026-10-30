@@ -20,6 +20,10 @@ from mantis.spec.models import HttpMethod
 from mantis.spec.parser import parse_spec
 from mantis.spec.errors import SpecReferenceError
 from mantis.spec.models import ParameterLocation
+from mantis.spec.models import (
+    ParameterLocation,
+    SecuritySchemeType,
+)
 
 
 EXAMPLES = Path(__file__).parent.parent.parent / "examples" / "openapi"
@@ -367,3 +371,152 @@ def test_response_sorting_is_deterministic():
     op = spec.operations[0]
     codes = [r.status_code for r in op.responses]
     assert codes == ["200", "404", "500", "default"]
+def test_extracts_security_schemes():
+    data = {
+        "openapi": "3.1.0",
+        "info": {"title": "t", "version": "1"},
+        "paths": {},
+        "components": {
+            "securitySchemes": {
+                "ApiKey": {
+                    "type": "apiKey",
+                    "name": "X-API-Key",
+                    "in": "header",
+                },
+                "Bearer": {
+                    "type": "http",
+                    "scheme": "bearer",
+                },
+            }
+        },
+    }
+    spec = parse_spec(data)
+    assert len(spec.security_schemes) == 2
+    names = {s.name for s in spec.security_schemes}
+    assert names == {"ApiKey", "Bearer"}
+
+    api_key = next(s for s in spec.security_schemes if s.name == "ApiKey")
+    assert api_key.type == SecuritySchemeType.API_KEY
+    assert api_key.api_key_name == "X-API-Key"
+    assert api_key.api_key_in == "header"
+
+    bearer = next(s for s in spec.security_schemes if s.name == "Bearer")
+    assert bearer.type == SecuritySchemeType.HTTP
+    assert bearer.http_scheme == "bearer"
+
+
+def test_operation_inherits_global_security():
+    data = {
+        "openapi": "3.1.0",
+        "info": {"title": "t", "version": "1"},
+        "security": [{"apiKey": []}],
+        "paths": {
+            "/x": {
+                "get": {"responses": {"200": {"description": "OK"}}}
+            }
+        },
+    }
+    spec = parse_spec(data)
+    op = spec.operations[0]
+    assert len(op.security) == 1
+    assert op.security[0].schemes == {"apiKey": ()}
+
+
+def test_operation_overrides_global_security():
+    data = {
+        "openapi": "3.1.0",
+        "info": {"title": "t", "version": "1"},
+        "security": [{"apiKey": []}],
+        "paths": {
+            "/x": {
+                "get": {
+                    "security": [{"oauth": ["read"]}],
+                    "responses": {"200": {"description": "OK"}},
+                }
+            }
+        },
+    }
+    spec = parse_spec(data)
+    op = spec.operations[0]
+    assert len(op.security) == 1
+    assert op.security[0].schemes == {"oauth": ("read",)}
+
+
+def test_operation_empty_security_overrides_global():
+    """security: [] explicitly disables global security."""
+    data = {
+        "openapi": "3.1.0",
+        "info": {"title": "t", "version": "1"},
+        "security": [{"apiKey": []}],
+        "paths": {
+            "/public": {
+                "get": {
+                    "security": [],
+                    "responses": {"200": {"description": "OK"}},
+                }
+            }
+        },
+    }
+    spec = parse_spec(data)
+    op = spec.operations[0]
+    assert op.security == ()
+
+
+def test_security_or_semantics():
+    """A list of requirements = OR."""
+    data = {
+        "openapi": "3.1.0",
+        "info": {"title": "t", "version": "1"},
+        "paths": {
+            "/x": {
+                "get": {
+                    "security": [
+                        {"apiKey": []},
+                        {"oauth": ["read"]},
+                    ],
+                    "responses": {"200": {"description": "OK"}},
+                }
+            }
+        },
+    }
+    spec = parse_spec(data)
+    op = spec.operations[0]
+    assert len(op.security) == 2
+    assert op.security[0].schemes == {"apiKey": ()}
+    assert op.security[1].schemes == {"oauth": ("read",)}
+
+
+def test_security_and_semantics():
+    """Multiple schemes in one requirement = AND."""
+    data = {
+        "openapi": "3.1.0",
+        "info": {"title": "t", "version": "1"},
+        "paths": {
+            "/x": {
+                "get": {
+                    "security": [{"apiKey": [], "mtls": []}],
+                    "responses": {"200": {"description": "OK"}},
+                }
+            }
+        },
+    }
+    spec = parse_spec(data)
+    op = spec.operations[0]
+    assert len(op.security) == 1
+    assert set(op.security[0].schemes.keys()) == {"apiKey", "mtls"}
+
+
+def test_no_security_anywhere():
+    data = {
+        "openapi": "3.1.0",
+        "info": {"title": "t", "version": "1"},
+        "paths": {
+            "/x": {
+                "get": {"responses": {"200": {"description": "OK"}}}
+            }
+        },
+    }
+    spec = parse_spec(data)
+    op = spec.operations[0]
+    assert op.security == ()
+    assert spec.security_schemes == ()

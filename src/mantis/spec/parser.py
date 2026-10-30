@@ -24,6 +24,9 @@ from mantis.spec.models import (
     ParameterLocation,
     RequestBody,
     Response,
+    SecurityRequirement,
+    SecurityScheme,
+    SecuritySchemeType,
 )
 from mantis.spec.refs import resolve_refs
 
@@ -54,7 +57,9 @@ def parse_spec(data: dict[str, Any]) -> ApiSpec:
     description = info.get("description")
 
     servers = _extract_servers(data.get("servers", []))
-    operations = _extract_operations(data["paths"], data)
+    security_schemes = _extract_security_schemes(data.get("components", {}))
+    global_security = _extract_security_requirements(data.get("security"))
+    operations = _extract_operations(data["paths"], data, global_security)
 
     return ApiSpec(
         openapi_version=version,
@@ -63,6 +68,7 @@ def parse_spec(data: dict[str, Any]) -> ApiSpec:
         description=description,
         servers=servers,
         operations=operations,
+        security_schemes=security_schemes,
     )
 
 
@@ -109,7 +115,9 @@ def _extract_servers(raw: Any) -> tuple[str, ...]:
 
 
 def _extract_operations(
-    paths: dict[str, Any], document: dict[str, Any]
+    paths: dict[str, Any],
+    document: dict[str, Any],
+    global_security: tuple[SecurityRequirement, ...],
 ) -> tuple[Operation, ...]:
     operations: list[Operation] = []
     for path, path_item_raw in paths.items():
@@ -126,7 +134,9 @@ def _extract_operations(
             if not isinstance(raw_op, dict):
                 continue
             operations.append(
-                _build_operation(path, method_enum, raw_op, path_params)
+                _build_operation(
+                    path, method_enum, raw_op, path_params, global_security
+                )
             )
     return tuple(operations)
 
@@ -136,6 +146,7 @@ def _build_operation(
     method: HttpMethod,
     raw: dict[str, Any],
     inherited: tuple[Parameter, ...],
+    global_security: tuple[SecurityRequirement, ...],
 ) -> Operation:
     tags_raw = raw.get("tags", [])
     tags = (
@@ -150,6 +161,12 @@ def _build_operation(
     request_body = _extract_request_body(raw.get("requestBody"))
     responses = _extract_responses(raw.get("responses", {}))
 
+    # Operation-level security OVERRIDES global if key is present (even if []).
+    if "security" in raw:
+        op_security = _extract_security_requirements(raw["security"])
+    else:
+        op_security = global_security
+
     return Operation(
         method=method,
         path=path,
@@ -160,6 +177,7 @@ def _build_operation(
         parameters=merged_params,
         request_body=request_body,
         responses=responses,
+        security=op_security,
     )
 
 
@@ -269,4 +287,63 @@ def _extract_responses(raw: Any) -> tuple[Response, ...]:
 
     # Sort by status code for determinism (2xx, 4xx, 5xx, default last)
     result.sort(key=lambda r: (r.status_code == "default", r.status_code))
+    return tuple(result)
+def _extract_security_schemes(components: Any) -> tuple[SecurityScheme, ...]:
+    if not isinstance(components, dict):
+        return ()
+    raw = components.get("securitySchemes")
+    if not isinstance(raw, dict):
+        return ()
+
+    result: list[SecurityScheme] = []
+    for name, scheme_raw in raw.items():
+        if not isinstance(name, str) or not isinstance(scheme_raw, dict):
+            continue
+
+        scheme_type_raw = scheme_raw.get("type")
+        try:
+            scheme_type = SecuritySchemeType(scheme_type_raw)
+        except (ValueError, TypeError):
+            continue  # unknown type, skip
+
+        result.append(
+            SecurityScheme(
+                name=name,
+                type=scheme_type,
+                api_key_name=scheme_raw.get("name") if isinstance(scheme_raw.get("name"), str) else None,
+                api_key_in=scheme_raw.get("in") if isinstance(scheme_raw.get("in"), str) else None,
+                http_scheme=scheme_raw.get("scheme") if isinstance(scheme_raw.get("scheme"), str) else None,
+                openid_connect_url=scheme_raw.get("openIdConnectUrl") if isinstance(scheme_raw.get("openIdConnectUrl"), str) else None,
+                description=scheme_raw.get("description") if isinstance(scheme_raw.get("description"), str) else None,
+            )
+        )
+    return tuple(result)
+
+
+def _extract_security_requirements(
+    raw: Any,
+) -> tuple[SecurityRequirement, ...]:
+    """Parse the OpenAPI `security` list.
+
+    - Each item in the list is one alternative (OR).
+    - Each item is a dict {schemeName: [scopes]} (AND within that item).
+    - An empty list means "no security requirements" (explicit opt-out).
+    """
+    if not isinstance(raw, list):
+        return ()
+
+    result: list[SecurityRequirement] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        schemes: dict[str, tuple[str, ...]] = {}
+        for scheme_name, scopes_raw in item.items():
+            if not isinstance(scheme_name, str):
+                continue
+            if isinstance(scopes_raw, list):
+                scopes = tuple(s for s in scopes_raw if isinstance(s, str))
+            else:
+                scopes = ()
+            schemes[scheme_name] = scopes
+        result.append(SecurityRequirement(schemes=schemes))
     return tuple(result)
