@@ -28,6 +28,13 @@ class MantisConfig:
     allowed_hosts: tuple[str, ...] = ("127.0.0.1", "localhost", "::1")
     allowed_ports: tuple[int, ...] = (8000,)
     max_spec_size_bytes: int = 10_000_000
+    ownership_fields: tuple[str, ...] = (
+        "branch_id",
+        "tenant_id",
+        "organization_id",
+        "owner_id",
+        "user_id",
+    )
 
 
 
@@ -44,3 +51,5 @@ class MantisConfig:
             raise ValueError("requests_per_minute must be at least 1")
         if self.max_spec_size_bytes < 1:
             raise ValueError("max_spec_size_bytes must be at least 1")
+        if not self.ownership_fields:
+            raise ValueError("ownership_fields must not be empty")
