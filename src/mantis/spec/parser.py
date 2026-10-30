@@ -22,6 +22,8 @@ from mantis.spec.models import (
     Operation,
     Parameter,
     ParameterLocation,
+    RequestBody,
+    Response,
 )
 from mantis.spec.refs import resolve_refs
 
@@ -145,6 +147,9 @@ def _build_operation(
     op_params = _extract_parameters(raw.get("parameters", []))
     merged_params = _merge_parameters(inherited, op_params)
 
+    request_body = _extract_request_body(raw.get("requestBody"))
+    responses = _extract_responses(raw.get("responses", {}))
+
     return Operation(
         method=method,
         path=path,
@@ -153,6 +158,8 @@ def _build_operation(
         description=raw.get("description") if isinstance(raw.get("description"), str) else None,
         tags=tags,
         parameters=merged_params,
+        request_body=request_body,
+        responses=responses,
     )
 
 
@@ -202,3 +209,64 @@ def _merge_parameters(
     for p in operation:
         merged[key(p)] = p
     return tuple(merged.values())
+def _extract_request_body(raw: Any) -> RequestBody | None:
+    if not isinstance(raw, dict):
+        return None
+
+    required = bool(raw.get("required", False))
+    description = raw.get("description") if isinstance(raw.get("description"), str) else None
+
+    content = raw.get("content")
+    content_types: tuple[str, ...] = ()
+    schema_ref: str | None = None
+
+    if isinstance(content, dict):
+        content_types = tuple(str(k) for k in content.keys())
+        # Try to capture a top-level $ref, if present, without resolving it.
+        for media_type in content.values():
+            if isinstance(media_type, dict):
+                schema = media_type.get("schema")
+                if isinstance(schema, dict) and isinstance(schema.get("$ref"), str):
+                    schema_ref = schema["$ref"]
+                    break
+
+    return RequestBody(
+        required=required,
+        content_types=content_types,
+        schema_ref=schema_ref,
+        description=description,
+    )
+
+
+def _extract_responses(raw: Any) -> tuple[Response, ...]:
+    if not isinstance(raw, dict):
+        return ()
+
+    result: list[Response] = []
+    for status_code, response_raw in raw.items():
+        if not isinstance(status_code, str):
+            status_code = str(status_code)
+
+        if not isinstance(response_raw, dict):
+            continue
+
+        description = response_raw.get("description")
+        if not isinstance(description, str):
+            description = ""
+
+        content = response_raw.get("content")
+        content_types: tuple[str, ...] = ()
+        if isinstance(content, dict):
+            content_types = tuple(str(k) for k in content.keys())
+
+        result.append(
+            Response(
+                status_code=status_code,
+                description=description,
+                content_types=content_types,
+            )
+        )
+
+    # Sort by status code for determinism (2xx, 4xx, 5xx, default last)
+    result.sort(key=lambda r: (r.status_code == "default", r.status_code))
+    return tuple(result)

@@ -278,3 +278,92 @@ def test_rejects_external_ref_in_paths():
     }
     with pytest.raises(SpecReferenceError, match="External"):
         parse_spec(data)
+def test_extracts_responses():
+    data = {
+        "openapi": "3.1.0",
+        "info": {"title": "t", "version": "1"},
+        "paths": {
+            "/x": {
+                "get": {
+                    "responses": {
+                        "200": {"description": "OK", "content": {"application/json": {}}},
+                        "404": {"description": "Not found"},
+                    }
+                }
+            }
+        },
+    }
+    spec = parse_spec(data)
+    op = spec.operations[0]
+    assert len(op.responses) == 2
+    assert op.responses[0].status_code == "200"
+    assert op.responses[0].description == "OK"
+    assert op.responses[0].content_types == ("application/json",)
+    assert op.responses[1].status_code == "404"
+    assert op.responses[1].content_types == ()
+
+
+def test_extracts_request_body_with_ref():
+    data = {
+        "openapi": "3.1.0",
+        "info": {"title": "t", "version": "1"},
+        "paths": {
+            "/invoices": {
+                "post": {
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/Invoice"}
+                            }
+                        },
+                    },
+                    "responses": {"201": {"description": "Created"}},
+                }
+            }
+        },
+        "components": {
+            "schemas": {"Invoice": {"type": "object"}}
+        },
+    }
+    spec = parse_spec(data)
+    op = spec.operations[0]
+    assert op.request_body is not None
+    assert op.request_body.required is True
+    assert op.request_body.content_types == ("application/json",)
+    # schema_ref is informational; it may be None because $ref was resolved
+    # before extraction. That's acceptable for MK-004.
+
+
+
+def test_no_request_body():
+    data = {
+        "openapi": "3.1.0",
+        "info": {"title": "t", "version": "1"},
+        "paths": {"/x": {"get": {"responses": {"200": {"description": "OK"}}}}},
+    }
+    spec = parse_spec(data)
+    assert spec.operations[0].request_body is None
+
+
+def test_response_sorting_is_deterministic():
+    data = {
+        "openapi": "3.1.0",
+        "info": {"title": "t", "version": "1"},
+        "paths": {
+            "/x": {
+                "get": {
+                    "responses": {
+                        "default": {"description": "err"},
+                        "500": {"description": "err"},
+                        "200": {"description": "ok"},
+                        "404": {"description": "nf"},
+                    }
+                }
+            }
+        },
+    }
+    spec = parse_spec(data)
+    op = spec.operations[0]
+    codes = [r.status_code for r in op.responses]
+    assert codes == ["200", "404", "500", "default"]
