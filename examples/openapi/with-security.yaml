@@ -1,0 +1,64 @@
+openapi: 3.1.0
+info:
+  title: Secured API
+  version: 1.0.0
+  description: A spec with security schemes and per-operation overrides.
+servers:
+  - url: http://127.0.0.1:8000
+security:
+  - ApiKeyAuth: []
+paths:
+  /public:
+    get:
+      operationId: getPublic
+      summary: Public endpoint
+      security: []
+      responses:
+        '200':
+          description: OK
+  /private:
+    get:
+      operationId: getPrivate
+      summary: Private endpoint (inherits global security)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrivateData'
+  /admin:
+    post:
+      operationId: adminAction
+      summary: Admin endpoint (OAuth or API key, AND with mTLS)
+      security:
+        - OAuth2:
+            - admin
+          MTLS: []
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      name: X-API-Key
+      in: header
+    OAuth2:
+      type: oauth2
+      description: OAuth2 with admin scope
+    MTLS:
+      type: mutualTLS
+  schemas:
+    PrivateData:
+      type: object
+      properties:
+        secret:
+          type: string
