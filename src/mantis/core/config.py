@@ -35,6 +35,11 @@ class MantisConfig:
         "owner_id",
         "user_id",
     )
+    state_fields: tuple[str, ...] = (
+        "status",
+        "state",
+        "phase",
+    )
 
 
 
@@ -53,3 +58,5 @@ class MantisConfig:
             raise ValueError("max_spec_size_bytes must be at least 1")
         if not self.ownership_fields:
             raise ValueError("ownership_fields must not be empty")
+        if not self.state_fields:
+            raise ValueError("state_fields must not be empty")
