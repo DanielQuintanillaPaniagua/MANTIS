@@ -3,11 +3,8 @@
 Loads an OpenAPI spec, runs authorization detection against the
 identities provided, and prints findings.
 
-This is the first command that DETECTS. It uses:
-- MK-004 spec parser to know the operations.
-- MK-003 MantisClient to send requests.
-- MK-003.1 TargetPolicy to restrict destinations.
-- MK-005 analysis engine to detect BOLA.
+By default, only BOLA (MK-005) is detected.
+With --sequences, BFLA and state skip (MK-006) are also detected.
 
 Exit codes:
     0 -> no findings
@@ -28,6 +25,7 @@ from pathlib import Path
 import httpx
 
 from mantis.analysis.authorization import Identity, detect_bola
+from mantis.analysis.sequences import detect_bfla, detect_state_skip
 from mantis.cli.commands.ping import DEFAULT_LOG_PATH
 from mantis.core.config import MantisConfig
 from mantis.spec.errors import SpecError
@@ -62,9 +60,31 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help="Base URL for all requests (default: http://127.0.0.1:8000).",
     )
     parser.add_argument(
+        "--sequences",
+        action="store_true",
+        help="Also run BFLA and state skip detection (MK-006).",
+    )
+    parser.add_argument(
+        "--privileged-operations",
+        action="append",
+        default=[],
+        metavar="SUBSTRING",
+        help=(
+            "Path substring for operations that only privileged identities "
+            "should execute (e.g. 'approve'). Required for BFLA detection. "
+            "Repeatable."
+        ),
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Output findings as JSON.",
+    )
+    parser.add_argument(
+        "--max-requests",
+        type=int,
+        default=None,
+        help="Override MantisConfig.max_requests for this scan.",
     )
     parser.add_argument(
         "--log",
@@ -81,7 +101,6 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 
 def _parse_identities(pairs: list[str], base_url: str) -> list[Identity]:
-    """Parse --identity name:key pairs into Identity objects."""
     result: list[Identity] = []
     for pair in pairs:
         if ":" not in pair:
@@ -95,6 +114,17 @@ def _parse_identities(pairs: list[str], base_url: str) -> list[Identity]:
     return result
 
 
+def _build_config(args: argparse.Namespace) -> MantisConfig:
+    kwargs = {}
+    if args.max_requests is not None:
+        kwargs["max_requests"] = args.max_requests
+        # raise rate limit proportionally to avoid tripping it
+        kwargs["requests_per_minute"] = max(20, args.max_requests)
+    if args.privileged_operations:
+        kwargs["privileged_operations"] = tuple(args.privileged_operations)
+    return MantisConfig(**kwargs)
+
+
 def run(args: argparse.Namespace) -> int:
     """Execute `mantis scan`."""
     try:
@@ -104,16 +134,18 @@ def run(args: argparse.Namespace) -> int:
         return 2
 
     if len(identities) < 2:
-        print(
-            "error: at least two --identity arguments are required",
-            file=sys.stderr,
-        )
+        print("error: at least two --identity arguments are required", file=sys.stderr)
         return 2
 
     identity_a, identity_b = identities[0], identities[1]
 
     try:
-        config = MantisConfig()
+        config = _build_config(args)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    try:
         data = load_spec(args.path, config=config)
         spec = parse_spec(data)
     except SpecError as exc:
@@ -128,15 +160,20 @@ def run(args: argparse.Namespace) -> int:
             print(f"error: cannot open log file {args.log}: {exc}", file=sys.stderr)
             return 4
 
+    all_findings: list = []
+
     try:
         with MantisClient(config, log_writer=log_writer) as client:
-            findings = detect_bola(
-                spec=spec,
-                client=client,
-                config=config,
-                identity_a=identity_a,
-                identity_b=identity_b,
+            all_findings.extend(
+                detect_bola(spec, client, config, identity_a, identity_b)
             )
+            if args.sequences:
+                all_findings.extend(
+                    detect_bfla(spec, client, config, identity_a, identity_b)
+                )
+                all_findings.extend(
+                    detect_state_skip(spec, client, config, identity_a)
+                )
     except EvidenceWriteError as exc:
         print(f"error: request executed but evidence not saved: {exc}", file=sys.stderr)
         return 5
@@ -145,6 +182,10 @@ def run(args: argparse.Namespace) -> int:
         return 4
     except RateLimitExceeded as exc:
         print(f"error: {exc}", file=sys.stderr)
+        print(
+            "hint: use --max-requests N to raise the session limit for large scans",
+            file=sys.stderr,
+        )
         return 3
     except httpx.HTTPError as exc:
         print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
@@ -153,19 +194,25 @@ def run(args: argparse.Namespace) -> int:
         if log_writer is not None:
             log_writer.close()
 
+    findings = tuple(all_findings)
+
     if args.json:
         print(json.dumps([f.to_dict() for f in findings], indent=2, ensure_ascii=False, default=str))
     else:
-        _print_human(findings, identity_a, identity_b)
+        _print_human(findings, identity_a, identity_b, args.sequences)
 
     return 1 if findings else 0
 
 
-def _print_human(findings, identity_a: Identity, identity_b: Identity) -> None:
+def _print_human(findings, identity_a: Identity, identity_b: Identity, sequences: bool) -> None:
     print("MANTIS :: SCAN")
     print()
     print(f"Identity A: {identity_a.name}")
     print(f"Identity B: {identity_b.name}")
+    if sequences:
+        print("Mode: BOLA + BFLA + state skip")
+    else:
+        print("Mode: BOLA only (use --sequences for more)")
     print(f"Findings: {len(findings)}")
     print()
     if not findings:
@@ -177,11 +224,9 @@ def _print_human(findings, identity_a: Identity, identity_b: Identity) -> None:
         print(f"  Type: {f.type.value}")
         print(f"  Operation: {f.operation_method} {f.operation_path}")
         print(f"  Identity: {f.identity}")
+        print(f"  Confidence: {f.confidence.value}")
         print(f"  Summary: {f.summary}")
-        print(f"  Details: {f.details}")
         print(f"  Reproduction:")
         for step in f.reproduction:
             print(f"    {step}")
         print()
-
-
