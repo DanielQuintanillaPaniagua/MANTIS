@@ -67,8 +67,15 @@ def detect_bfla(
 
     findings: list[Finding] = []
 
+    if not config.privileged_operations:
+        # Without a declaration of privileged operations, we cannot
+        # distinguish legitimate state changes from privileged ones.
+        return ()
+
     for op in spec.operations:
         if op.method not in STATE_CHANGING_METHODS:
+            continue
+        if not _is_privileged(op.path, config.privileged_operations):
             continue
         path_param = _first_path_param(op)
         if path_param is None:
@@ -343,3 +350,9 @@ def _derive_read_path(operation_path: str, path_param: str) -> str | None:
     # Cut everything after the path param
     idx = operation_path.index(marker) + len(marker)
     return operation_path[:idx]
+def _is_privileged(path: str, privileged_operations: tuple[str, ...]) -> bool:
+    """Return True if the path contains any of the privileged operation markers.
+
+    Example: path="/invoices/{invoice_id}/approve", markers=("approve",) -> True
+    """
+    return any(marker in path for marker in privileged_operations)

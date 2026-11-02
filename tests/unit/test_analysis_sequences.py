@@ -20,6 +20,15 @@ ADMIN = Identity("admin", "lab-admin-key", "http://127.0.0.1:8000")
 EMPLOYEE = Identity("employee", "lab-employee-key", "http://127.0.0.1:8000")
 
 
+def _config() -> MantisConfig:
+    """Config with high limits and privileged operations for BFLA tests."""
+    return MantisConfig(
+        max_requests=200,
+        requests_per_minute=200,
+        privileged_operations=("approve",),
+    )
+
+
 def _spec() -> ApiSpec:
     """Spec with /lab/reset, GET /invoices/{id}, POST /invoices/{id}/approve."""
     reset_op = Operation(method=HttpMethod.POST, path="/lab/reset")
@@ -45,8 +54,8 @@ def _spec() -> ApiSpec:
     )
 
 
-def _client(handler) -> MantisClient:
-    return MantisClient(MantisConfig(), transport=httpx.MockTransport(handler))
+def _client(handler, config: MantisConfig) -> MantisClient:
+    return MantisClient(config, transport=httpx.MockTransport(handler))
 
 
 def test_detects_bfla_when_employee_can_approve():
@@ -76,8 +85,9 @@ def test_detects_bfla_when_employee_can_approve():
 
         return httpx.Response(404)
 
-    with _client(handler) as client:
-        findings = detect_bfla(_spec(), client, MantisConfig(), ADMIN, EMPLOYEE)
+    config = _config()
+    with _client(handler, config) as client:
+        findings = detect_bfla(_spec(), client, config, ADMIN, EMPLOYEE)
 
     assert len(findings) == 1
     assert findings[0].type.value == "BFLA"
@@ -108,21 +118,60 @@ def test_no_bfla_if_employee_gets_403():
 
         return httpx.Response(404)
 
-    with _client(handler) as client:
-        findings = detect_bfla(_spec(), client, MantisConfig(), ADMIN, EMPLOYEE)
+    config = _config()
+    with _client(handler, config) as client:
+        findings = detect_bfla(_spec(), client, config, ADMIN, EMPLOYEE)
+
+    assert findings == ()
+
+
+def test_no_bfla_without_privileged_operations():
+    """Without privileged_operations, detect_bfla returns () even if everything else works."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[])
+
+    config = MantisConfig(
+        max_requests=200,
+        requests_per_minute=200,
+        privileged_operations=(),  # empty
+    )
+    with _client(handler, config) as client:
+        findings = detect_bfla(_spec(), client, config, ADMIN, EMPLOYEE)
 
     assert findings == ()
 
 
 def test_no_bfla_without_reset_endpoint():
-    """Without /lab/reset, detect_bfla returns ()."""
+    """Without /lab/reset in spec, detect_bfla returns ()."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=[])
 
-    with _client(handler) as client:
-        findings = detect_bfla(_spec(), client, MantisConfig(), ADMIN, EMPLOYEE)
-    # The spec has /lab/reset, but the handler returns [] for everything.
-    # Wait: the spec has /lab/reset. So reset works. But there are no resources.
-    # Then no BFLA.
+    # Spec without /lab/reset
+    read_op = Operation(
+        method=HttpMethod.GET,
+        path="/invoices/{invoice_id}",
+        parameters=(
+            Parameter(name="invoice_id", location=ParameterLocation.PATH, required=True),
+        ),
+    )
+    approve_op = Operation(
+        method=HttpMethod.POST,
+        path="/invoices/{invoice_id}/approve",
+        parameters=(
+            Parameter(name="invoice_id", location=ParameterLocation.PATH, required=True),
+        ),
+    )
+    spec_without_reset = ApiSpec(
+        openapi_version="3.1.0",
+        title="Test",
+        version="1.0.0",
+        operations=(read_op, approve_op),
+    )
+
+    config = _config()
+    with _client(handler, config) as client:
+        findings = detect_bfla(spec_without_reset, client, config, ADMIN, EMPLOYEE)
+
     assert findings == ()

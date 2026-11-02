@@ -40,6 +40,7 @@ class MantisConfig:
         "state",
         "phase",
     )
+    privileged_operations: tuple[str, ...] = ()
 
 
 
@@ -60,3 +61,5 @@ class MantisConfig:
             raise ValueError("ownership_fields must not be empty")
         if not self.state_fields:
             raise ValueError("state_fields must not be empty")
+        # privileged_operations can be empty; no validation needed.
+        # It is a user-provided list of path substrings.
