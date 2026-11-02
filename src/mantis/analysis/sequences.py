@@ -356,3 +356,181 @@ def _is_privileged(path: str, privileged_operations: tuple[str, ...]) -> bool:
     Example: path="/invoices/{invoice_id}/approve", markers=("approve",) -> True
     """
     return any(marker in path for marker in privileged_operations)
+def detect_state_skip(
+    spec: ApiSpec,
+    client: MantisClient,
+    config: MantisConfig,
+    identity_a: Identity,
+) -> tuple[Finding, ...]:
+    """Detect state skip vulnerabilities.
+
+    Strategy:
+    1. Reset lab, list resources in 'draft' state.
+    2. Observe natural transition: the first state-changing operation
+       that succeeds on a 'draft' resource and changes its state.
+    3. For each other state-changing operation:
+       - Reset lab, get a 'draft' resource.
+       - Execute the operation.
+       - If state changed, report STATE_SKIP.
+
+    Requires /lab/reset in the spec. Returns () otherwise.
+    """
+    reset_available = any(
+        op.method is HttpMethod.POST and op.path == RESET_PATH
+        for op in spec.operations
+    )
+    if not reset_available:
+        return ()
+
+    # Find candidate state-changing operations with a path param
+    state_ops = []
+    for op in spec.operations:
+        if op.method not in STATE_CHANGING_METHODS:
+            continue
+        path_param = _first_path_param(op)
+        if path_param is None:
+            continue
+        parent_path = _parent_path(op.path)
+        if parent_path is None:
+            continue
+        read_path = _derive_read_path(op.path, path_param)
+        if read_path is None:
+            continue
+        read_op = _find_read_operation(spec, read_path)
+        if read_op is None:
+            continue
+        state_ops.append((op, path_param, read_op))
+
+    if len(state_ops) < 2:
+        return ()  # Need at least two to distinguish natural from skip
+
+    # Phase 1: find the natural transition (first op that moves draft)
+    natural_op_path = None
+    for op, path_param, read_op in state_ops:
+        if not _reset_lab(client, identity_a):
+            continue
+        draft_id = _find_draft_resource(
+            client, identity_a, read_op.path, path_param, config
+        )
+        if draft_id is None:
+            continue
+        status_before = _get_state(
+            client, identity_a, read_op.path, path_param, draft_id, config
+        )
+        if status_before is None:
+            continue
+        status_code = _execute(client, identity_a, op, path_param, draft_id)
+        if status_code not in (200, 201, 204):
+            continue
+        status_after = _get_state(
+            client, identity_a, read_op.path, path_param, draft_id, config
+        )
+        if status_after is None or status_after == status_before:
+            continue
+        # This is the natural transition
+        natural_op_path = op.path
+        break
+
+    if natural_op_path is None:
+        return ()  # Cannot determine natural flow
+
+    # Phase 2: probe non-natural state-changing operations
+    findings: list[Finding] = []
+    for op, path_param, read_op in state_ops:
+        if op.path == natural_op_path:
+            continue
+
+        if not _reset_lab(client, identity_a):
+            continue
+        draft_id = _find_draft_resource(
+            client, identity_a, read_op.path, path_param, config
+        )
+        if draft_id is None:
+            continue
+        status_before = _get_state(
+            client, identity_a, read_op.path, path_param, draft_id, config
+        )
+        if status_before is None:
+            continue
+        status_code = _execute(client, identity_a, op, path_param, draft_id)
+        status_after = _get_state(
+            client, identity_a, read_op.path, path_param, draft_id, config
+        )
+
+        if status_code not in (200, 201, 204):
+            continue
+        if status_after is None or status_after == status_before:
+            continue
+
+        transition = _describe_transition(status_before, status_after)
+        url = identity_a.base_url.rstrip("/") + op.path.replace(
+            "{" + path_param + "}", draft_id
+        )
+
+        findings.append(
+            Finding(
+                id=f"STATE_SKIP-{op.path.replace('/', '_')}-{draft_id}",
+                type=FindingType.STATE_SKIP,
+                severity=Severity.HIGH,
+                confidence=Confidence.MEDIUM,
+                operation_method=op.method.value,
+                operation_path=op.path,
+                identity=identity_a.name,
+                summary=(
+                    f"{op.method.value} {op.path} moved a resource from "
+                    f"{_primary_state(status_before)} to "
+                    f"{_primary_state(status_after)}, skipping the natural flow"
+                ),
+                details=(
+                    f"Operation {op.method.value} {op.path} executed on a resource "
+                    f"in its initial state ({status_before}) and changed it to "
+                    f"{status_after}. The natural transition (observed on "
+                    f"{natural_op_path}) was skipped."
+                ),
+                evidence=(
+                    Evidence(
+                        description=f"{identity_a.name} executes {op.method.value} {op.path} on resource {draft_id}",
+                        method=op.method.value,
+                        url=url,
+                        status=status_code,
+                    ),
+                ),
+                reproduction=(
+                    "1. Reset lab",
+                    f"2. Find a resource in state {_primary_state(status_before)}",
+                    f"3. Execute {op.method.value} {url}",
+                    f"4. Observe state transition: {transition}",
+                    f"5. Expected 409 (transition not allowed in this state), got {status_code}",
+                ),
+            )
+        )
+
+    return tuple(findings)
+
+
+def _find_draft_resource(
+    client: MantisClient,
+    identity: Identity,
+    read_path: str,
+    path_param: str,
+    config: MantisConfig,
+) -> str | None:
+    """Find a resource in the first state_field value 'draft' (or first state found)."""
+    parent_path = read_path.split("/{", 1)[0]
+    ids = _list_resource_ids(client, identity, parent_path)
+    for resource_id in ids:
+        state = _get_state(client, identity, read_path, path_param, resource_id, config)
+        if state is None:
+            continue
+        # Consider "draft" or any state whose primary value is "draft"
+        primary = _primary_state(state)
+        if primary == "draft":
+            return resource_id
+    return None
+
+
+def _primary_state(state: dict[str, str]) -> str:
+    """Return the first state value, for human-readable messages."""
+    for value in state.values():
+        return value
+    return "(unknown)"

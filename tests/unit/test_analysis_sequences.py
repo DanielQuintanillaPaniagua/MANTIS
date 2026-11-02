@@ -14,6 +14,7 @@ from mantis.spec.models import (
     ParameterLocation,
 )
 from mantis.transport.client import MantisClient
+from mantis.analysis.sequences import detect_bfla, detect_state_skip
 
 
 ADMIN = Identity("admin", "lab-admin-key", "http://127.0.0.1:8000")
@@ -173,5 +174,122 @@ def test_no_bfla_without_reset_endpoint():
     config = _config()
     with _client(handler, config) as client:
         findings = detect_bfla(spec_without_reset, client, config, ADMIN, EMPLOYEE)
+
+    assert findings == ()
+def test_detects_state_skip_when_admin_approves_draft():
+    """Admin approves a draft invoice directly (V3)."""
+
+    state = {"status": "draft"}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        key = request.headers.get("x-api-key", "")
+
+        if path == "/lab/reset":
+            state["status"] = "draft"
+            return httpx.Response(200, json={"status": "reset"})
+
+        if path == "/invoices":
+            return httpx.Response(200, json=[{"id": 1}])
+
+        if path == "/invoices/1":
+            return httpx.Response(200, json={"id": 1, "status": state["status"]})
+
+        if path == "/invoices/1/submit":
+            if state["status"] == "draft":
+                state["status"] = "submitted"
+                return httpx.Response(200, json={"status": "submitted"})
+            return httpx.Response(409)
+
+        if path == "/invoices/1/approve":
+            if state["status"] == "draft":
+                # V3: skip submitted
+                state["status"] = "approved"
+                return httpx.Response(200, json={"status": "approved"})
+            if state["status"] == "submitted":
+                state["status"] = "approved"
+                return httpx.Response(200, json={"status": "approved"})
+            return httpx.Response(409)
+
+        return httpx.Response(404)
+
+    spec = _spec_with_state_ops()
+    config = _config()
+    with _client(handler, config) as client:
+        findings = detect_state_skip(spec, client, config, ADMIN)
+
+    assert len(findings) == 1
+    assert findings[0].type.value == "STATE_SKIP"
+    assert findings[0].confidence.value == "medium"
+
+
+def _spec_with_state_ops() -> ApiSpec:
+    """Spec with reset, GET, submit, and approve."""
+    reset_op = Operation(method=HttpMethod.POST, path="/lab/reset")
+    read_op = Operation(
+        method=HttpMethod.GET,
+        path="/invoices/{invoice_id}",
+        parameters=(
+            Parameter(name="invoice_id", location=ParameterLocation.PATH, required=True),
+        ),
+    )
+    submit_op = Operation(
+        method=HttpMethod.POST,
+        path="/invoices/{invoice_id}/submit",
+        parameters=(
+            Parameter(name="invoice_id", location=ParameterLocation.PATH, required=True),
+        ),
+    )
+    approve_op = Operation(
+        method=HttpMethod.POST,
+        path="/invoices/{invoice_id}/approve",
+        parameters=(
+            Parameter(name="invoice_id", location=ParameterLocation.PATH, required=True),
+        ),
+    )
+    return ApiSpec(
+        openapi_version="3.1.0",
+        title="Test",
+        version="1.0.0",
+        operations=(reset_op, read_op, submit_op, approve_op),
+    )
+
+
+def test_no_state_skip_if_approve_requires_submitted():
+    """Correct behavior: approve on draft returns 409. No finding."""
+
+    state = {"status": "draft"}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+
+        if path == "/lab/reset":
+            state["status"] = "draft"
+            return httpx.Response(200)
+
+        if path == "/invoices":
+            return httpx.Response(200, json=[{"id": 1}])
+
+        if path == "/invoices/1":
+            return httpx.Response(200, json={"id": 1, "status": state["status"]})
+
+        if path == "/invoices/1/submit":
+            if state["status"] == "draft":
+                state["status"] = "submitted"
+                return httpx.Response(200, json={"status": "submitted"})
+            return httpx.Response(409)
+
+        if path == "/invoices/1/approve":
+            if state["status"] == "submitted":
+                state["status"] = "approved"
+                return httpx.Response(200, json={"status": "approved"})
+            return httpx.Response(409)  # Correct: rejects draft
+
+        return httpx.Response(404)
+
+    spec = _spec_with_state_ops()
+    config = _config()
+    with _client(handler, config) as client:
+        findings = detect_state_skip(spec, client, config, ADMIN)
 
     assert findings == ()
