@@ -70,3 +70,22 @@ def test_state_skip_is_deterministic():
     ids_a = sorted(f.id for f in _run())
     ids_b = sorted(f.id for f in _run())
     assert ids_a == ids_b
+def test_state_skip_with_allowed_transitions():
+    """With allowed_transitions declared, state skip is detected correctly."""
+    spec = _load_spec()
+    admin = Identity("admin", ADMIN_KEY, LAB_URL)
+    config = MantisConfig(
+        max_requests=200,
+        requests_per_minute=200,
+        allowed_transitions=(
+            "status:draft->submitted",
+            "status:submitted->approved",
+        ),
+    )
+
+    with MantisClient(config) as client:
+        findings = detect_state_skip(spec, client, config, admin)
+
+    assert len(findings) >= 1
+    assert all(f.type.value == "STATE_SKIP" for f in findings)
+    assert all("/approve" in f.operation_path for f in findings)

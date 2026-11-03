@@ -188,20 +188,19 @@ def _execute(
     param: str,
     resource_id: str,
 ) -> int:
+    """Execute a state-changing operation using its declared HTTP method.
+
+    Limitation: no request body is sent. This is fine for the lab (POST
+    with no body). For APIs that require a body on PUT/PATCH/POST, this
+    will fail or produce misleading results. Documented in MK-006.md.
+    """
     url = identity.base_url.rstrip("/") + operation.path.replace(
         "{" + param + "}", resource_id
     )
     try:
-        if operation.method is HttpMethod.POST:
-            response = client.post(url, headers=identity.headers())
-        elif operation.method is HttpMethod.PUT:
-            response = client.post(url, headers=identity.headers())
-        elif operation.method is HttpMethod.PATCH:
-            response = client.post(url, headers=identity.headers())
-        elif operation.method is HttpMethod.DELETE:
-            response = client.post(url, headers=identity.headers())
-        else:
-            return 0
+        response = client.request(
+            operation.method.value, url, headers=identity.headers()
+        )
     except httpx.HTTPError:
         return 0
     return response.status_code
@@ -404,40 +403,77 @@ def detect_state_skip(
     if len(state_ops) < 2:
         return ()  # Need at least two to distinguish natural from skip
 
-    # Phase 1: find the natural transition (first op that moves draft)
-    natural_op_path = None
-    for op, path_param, read_op in state_ops:
-        if not _reset_lab(client, identity_a):
-            continue
-        draft_id = _find_draft_resource(
-            client, identity_a, read_op.path, path_param, config
-        )
-        if draft_id is None:
-            continue
-        status_before = _get_state(
-            client, identity_a, read_op.path, path_param, draft_id, config
-        )
-        if status_before is None:
-            continue
-        status_code = _execute(client, identity_a, op, path_param, draft_id)
-        if status_code not in (200, 201, 204):
-            continue
-        status_after = _get_state(
-            client, identity_a, read_op.path, path_param, draft_id, config
-        )
-        if status_after is None or status_after == status_before:
-            continue
-        # This is the natural transition
-        natural_op_path = op.path
-        break
+    # Parse allowed_transitions if configured
+    allowed = _parse_transitions(config.allowed_transitions)
 
-    if natural_op_path is None:
+    # Determine the natural transition.
+    # If allowed_transitions is configured, use it to identify which
+    # operations are "allowed" (natural). Otherwise, fall back to the
+    # heuristic: first op in spec order that moves a draft resource.
+    natural_op_paths: set[str] = set()
+    use_declared = bool(allowed)
+
+    if use_declared:
+        # Find which operations produce an allowed transition
+        for op, path_param, read_op in state_ops:
+            if not _reset_lab(client, identity_a):
+                continue
+            draft_id = _find_draft_resource(
+                client, identity_a, read_op.path, path_param, config
+            )
+            if draft_id is None:
+                continue
+            status_before = _get_state(
+                client, identity_a, read_op.path, path_param, draft_id, config
+            )
+            if status_before is None:
+                continue
+            status_code = _execute(client, identity_a, op, path_param, draft_id)
+            if status_code not in (200, 201, 204):
+                continue
+            status_after = _get_state(
+                client, identity_a, read_op.path, path_param, draft_id, config
+            )
+            if status_after is None or status_after == status_before:
+                continue
+            if _is_allowed_transition(allowed, status_before, status_after):
+                natural_op_paths.add(op.path)
+
+        if not natural_op_paths:
+            return ()  # No allowed transition found. Nothing to compare.
+    else:
+        # Fallback: heuristic by spec order
+        for op, path_param, read_op in state_ops:
+            if not _reset_lab(client, identity_a):
+                continue
+            draft_id = _find_draft_resource(
+                client, identity_a, read_op.path, path_param, config
+            )
+            if draft_id is None:
+                continue
+            status_before = _get_state(
+                client, identity_a, read_op.path, path_param, draft_id, config
+            )
+            if status_before is None:
+                continue
+            status_code = _execute(client, identity_a, op, path_param, draft_id)
+            if status_code not in (200, 201, 204):
+                continue
+            status_after = _get_state(
+                client, identity_a, read_op.path, path_param, draft_id, config
+            )
+            if status_after is None or status_after == status_before:
+                continue
+            natural_op_paths.add(op.path)
+            break
+
+    if not natural_op_paths:
         return ()  # Cannot determine natural flow
 
-    # Phase 2: probe non-natural state-changing operations
+    # Phase 2: probe operations that are not part of the natural flow
     findings: list[Finding] = []
     for op, path_param, read_op in state_ops:
-        if op.path == natural_op_path:
+        if op.path in natural_op_paths:
             continue
 
         if not _reset_lab(client, identity_a):
@@ -484,8 +520,8 @@ def detect_state_skip(
                 details=(
                     f"Operation {op.method.value} {op.path} executed on a resource "
                     f"in its initial state ({status_before}) and changed it to "
-                    f"{status_after}. The natural transition (observed on "
-                    f"{natural_op_path}) was skipped."
+                    f"{status_after}. The natural flow (observed on "
+                    f"{', '.join(sorted(natural_op_paths))}) was skipped."
                 ),
                 evidence=(
                     Evidence(
@@ -534,3 +570,50 @@ def _primary_state(state: dict[str, str]) -> str:
     for value in state.values():
         return value
     return "(unknown)"
+def _parse_transitions(
+    raw: tuple[str, ...],
+) -> dict[str, dict[str, list[str]]]:
+    """Parse allowed_transitions strings like 'status:draft->submitted'.
+
+    Returns {field: {from_state: [to_state, ...]}}.
+    Malformed entries are silently skipped.
+    """
+    result: dict[str, dict[str, list[str]]] = {}
+    for item in raw:
+        if ":" not in item or "->" not in item:
+            continue
+        field, transition = item.split(":", 1)
+        src, dst = transition.split("->", 1)
+        field = field.strip()
+        src = src.strip()
+        dst = dst.strip()
+        if not field or not src or not dst:
+            continue
+        result.setdefault(field, {}).setdefault(src, []).append(dst)
+    return result
+
+
+def _is_allowed_transition(
+    allowed: dict[str, dict[str, list[str]]],
+    before: dict[str, str],
+    after: dict[str, str],
+) -> bool:
+    """Check if the transition from `before` to `after` is in `allowed`.
+
+    A transition is allowed if, for each field that changed, the change
+    is declared. Fields that did not change are ignored.
+    """
+    any_change = False
+    for field, before_value in before.items():
+        if field not in after:
+            continue
+        after_value = after[field]
+        if before_value == after_value:
+            continue
+        any_change = True
+        # Check declared transitions for this field
+        field_transitions = allowed.get(field, {})
+        allowed_targets = field_transitions.get(before_value, [])
+        if after_value not in allowed_targets:
+            return False
+    return any_change

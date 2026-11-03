@@ -15,6 +15,7 @@ from mantis.spec.models import (
 )
 from mantis.transport.client import MantisClient
 from mantis.analysis.sequences import detect_bfla, detect_state_skip
+from mantis.analysis.sequences import detect_bfla, detect_state_skip
 
 
 ADMIN = Identity("admin", "lab-admin-key", "http://127.0.0.1:8000")
@@ -293,3 +294,82 @@ def test_no_state_skip_if_approve_requires_submitted():
         findings = detect_state_skip(spec, client, config, ADMIN)
 
     assert findings == ()
+def test_state_skip_with_allowed_transitions_ignores_order():
+    """If allowed_transitions is declared, spec order does not matter."""
+
+    state = {"status": "draft"}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+
+        if path == "/lab/reset":
+            state["status"] = "draft"
+            return httpx.Response(200)
+
+        if path == "/invoices":
+            return httpx.Response(200, json=[{"id": 1}])
+
+        if path == "/invoices/1":
+            return httpx.Response(200, json={"id": 1, "status": state["status"]})
+
+        if path == "/invoices/1/submit":
+            if state["status"] == "draft":
+                state["status"] = "submitted"
+                return httpx.Response(200)
+            return httpx.Response(409)
+
+        if path == "/invoices/1/approve":
+            if state["status"] == "submitted":
+                state["status"] = "approved"
+                return httpx.Response(200)
+            # V3: approve draft directly
+            if state["status"] == "draft":
+                state["status"] = "approved"
+                return httpx.Response(200)
+            return httpx.Response(409)
+
+        return httpx.Response(404)
+
+    # Spec with approve BEFORE submit (worst case for order-based heuristic)
+    read_op = Operation(
+        method=HttpMethod.GET,
+        path="/invoices/{invoice_id}",
+        parameters=(
+            Parameter(name="invoice_id", location=ParameterLocation.PATH, required=True),
+        ),
+    )
+    approve_op = Operation(
+        method=HttpMethod.POST,
+        path="/invoices/{invoice_id}/approve",
+        parameters=(
+            Parameter(name="invoice_id", location=ParameterLocation.PATH, required=True),
+        ),
+    )
+    submit_op = Operation(
+        method=HttpMethod.POST,
+        path="/invoices/{invoice_id}/submit",
+        parameters=(
+            Parameter(name="invoice_id", location=ParameterLocation.PATH, required=True),
+        ),
+    )
+    reset_op = Operation(method=HttpMethod.POST, path="/lab/reset")
+    spec = ApiSpec(
+        openapi_version="3.1.0",
+        title="Test",
+        version="1.0.0",
+        operations=(reset_op, read_op, approve_op, submit_op),  # approve BEFORE submit
+    )
+
+    config = MantisConfig(
+        max_requests=200,
+        requests_per_minute=200,
+        allowed_transitions=("status:draft->submitted", "status:submitted->approved"),
+    )
+    with _client(handler, config) as client:
+        findings = detect_state_skip(spec, client, config, ADMIN)
+
+    # With allowed_transitions, approve is correctly identified as state skip
+    # even though it appears first in the spec.
+    assert len(findings) == 1
+    assert findings[0].type.value == "STATE_SKIP"
+    assert "/approve" in findings[0].operation_path

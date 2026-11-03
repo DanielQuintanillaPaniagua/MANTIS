@@ -76,6 +76,17 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         ),
     )
     parser.add_argument(
+        "--allowed-transition",
+        action="append",
+        default=[],
+        metavar="FIELD:FROM->TO",
+        help=(
+            "Declare an allowed state transition (e.g. 'status:draft->submitted'). "
+            "Repeatable. Without this, state skip detection uses a fragile "
+            "heuristic based on OpenAPI operation order."
+        ),
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Output findings as JSON.",
@@ -122,6 +133,8 @@ def _build_config(args: argparse.Namespace) -> MantisConfig:
         kwargs["requests_per_minute"] = max(20, args.max_requests)
     if args.privileged_operations:
         kwargs["privileged_operations"] = tuple(args.privileged_operations)
+    if args.allowed_transition:
+        kwargs["allowed_transitions"] = tuple(args.allowed_transition)
     return MantisConfig(**kwargs)
 
 

@@ -41,7 +41,7 @@ class MantisConfig:
         "phase",
     )
     privileged_operations: tuple[str, ...] = ()
-
+    allowed_transitions: tuple[str, ...] = ()
 
 
     def __post_init__(self) -> None:
