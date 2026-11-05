@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from mantis.cli.commands import ping, scan, spec
+from mantis.cli.commands import ping, regression, scan, spec
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mantis",
@@ -24,6 +24,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ping.register(subparsers)
     spec.register(subparsers)
     scan.register(subparsers)
+    regression.register(subparsers)
 
     return parser
 
@@ -48,6 +49,8 @@ def main(argv: list[str] | None = None) -> int:
         return spec.run(args)
     if args.command == "scan":
         return scan.run(args)
+    if args.command == "regression":
+        return regression.run(args)
     parser.error(f"Unknown command: {args.command}")
     return 1
 
