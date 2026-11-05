@@ -1,0 +1,46 @@
+{
+  "spec": "examples\\openapi\\mantis-lab.json",
+  "spec_title": "MANTIS Lab",
+  "options": {
+    "sequences": true,
+    "privileged_operations": [
+      "approve"
+    ],
+    "allowed_transitions": [
+      "status:draft->submitted",
+      "status:submitted->approved"
+    ],
+    "max_requests": 200,
+    "base_url": "http://127.0.0.1:8000"
+  },
+  "identities": [
+    {
+      "name": "admin"
+    },
+    {
+      "name": "employee"
+    }
+  ],
+  "expected_findings": [
+    {
+      "id": "BOLA-_invoices_{invoice_id}-3",
+      "type": "BOLA"
+    },
+    {
+      "id": "BOLA-_invoices_{invoice_id}-4",
+      "type": "BOLA"
+    },
+    {
+      "id": "BFLA-_invoices_{invoice_id}_approve-1",
+      "type": "BFLA"
+    },
+    {
+      "id": "BFLA-_invoices_{invoice_id}_approve-2",
+      "type": "BFLA"
+    },
+    {
+      "id": "STATE_SKIP-_invoices_{invoice_id}_approve-1",
+      "type": "STATE_SKIP"
+    }
+  ]
+}
