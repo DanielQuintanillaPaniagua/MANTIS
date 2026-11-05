@@ -53,17 +53,16 @@ def _sample_finding() -> Finding:
 def test_json_empty():
     result = format_findings_json((), spec_title="Test")
     data = json.loads(result)
-    assert data["spec"] == "Test"
-    assert data["findings_count"] == 0
-    assert data["findings"] == []
+    assert isinstance(data, list)
+    assert data == []
 
 
 def test_json_with_finding():
     result = format_findings_json((_sample_finding(),), spec_title="Test")
     data = json.loads(result)
-    assert data["spec"] == "Test"
-    assert data["findings_count"] == 1
-    f = data["findings"][0]
+    assert isinstance(data, list)
+    assert len(data) == 1
+    f = data[0]
     assert f["id"] == "BOLA-001"
     assert f["type"] == "BOLA"
     assert f["severity"] == "high"
@@ -74,7 +73,6 @@ def test_json_with_finding():
 
 def test_json_is_valid_utf8():
     f = _sample_finding()
-    # Simulate unicode in summary
     f_unicode = Finding(
         id=f.id,
         type=f.type,
@@ -88,7 +86,7 @@ def test_json_is_valid_utf8():
     )
     result = format_findings_json((f_unicode,), spec_title="Test")
     data = json.loads(result)
-    assert "año" in data["findings"][0]["summary"]
+    assert "año" in data[0]["summary"]
 
 
 # --- Markdown ---

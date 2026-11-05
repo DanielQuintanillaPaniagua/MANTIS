@@ -28,6 +28,10 @@ from mantis.analysis.authorization import Identity, detect_bola
 from mantis.analysis.sequences import detect_bfla, detect_state_skip
 from mantis.cli.commands.ping import DEFAULT_LOG_PATH
 from mantis.core.config import MantisConfig
+from mantis.reporting.formatters import (
+    format_findings_json,
+    format_findings_markdown,
+)
 from mantis.spec.errors import SpecError
 from mantis.spec.loader import load_spec
 from mantis.spec.parser import parse_spec
@@ -82,14 +86,26 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         metavar="FIELD:FROM->TO",
         help=(
             "Declare an allowed state transition (e.g. 'status:draft->submitted'). "
-            "Repeatable. Without this, state skip detection uses a fragile "
-            "heuristic based on OpenAPI operation order."
+            "Repeatable."
         ),
+    )
+    parser.add_argument(
+        "--format",
+        choices=("human", "json", "markdown"),
+        default="human",
+        help="Output format (default: human).",
     )
     parser.add_argument(
         "--json",
         action="store_true",
-        help="Output findings as JSON.",
+        help="Deprecated: use --format json.",
+    )
+    parser.add_argument(
+        "--save-baseline",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="Save expected findings to FILE for later regression testing.",
     )
     parser.add_argument(
         "--max-requests",
@@ -129,7 +145,6 @@ def _build_config(args: argparse.Namespace) -> MantisConfig:
     kwargs = {}
     if args.max_requests is not None:
         kwargs["max_requests"] = args.max_requests
-        # raise rate limit proportionally to avoid tripping it
         kwargs["requests_per_minute"] = max(20, args.max_requests)
     if args.privileged_operations:
         kwargs["privileged_operations"] = tuple(args.privileged_operations)
@@ -195,10 +210,7 @@ def run(args: argparse.Namespace) -> int:
         return 4
     except RateLimitExceeded as exc:
         print(f"error: {exc}", file=sys.stderr)
-        print(
-            "hint: use --max-requests N to raise the session limit for large scans",
-            file=sys.stderr,
-        )
+        print("hint: use --max-requests N to raise the session limit", file=sys.stderr)
         return 3
     except httpx.HTTPError as exc:
         print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
@@ -209,12 +221,61 @@ def run(args: argparse.Namespace) -> int:
 
     findings = tuple(all_findings)
 
-    if args.json:
-        print(json.dumps([f.to_dict() for f in findings], indent=2, ensure_ascii=False, default=str))
+    # Save baseline if requested
+    if args.save_baseline is not None:
+        _save_baseline(
+            path=args.save_baseline,
+            spec_path=args.path,
+            spec_title=spec.title,
+            args=args,
+            identities=identities,
+            findings=findings,
+        )
+
+    # Determine format (--json is a deprecated alias for --format json)
+    output_format = "json" if args.json else args.format
+
+    if output_format == "json":
+        print(format_findings_json(findings, spec_title=spec.title))
+    elif output_format == "markdown":
+        print(format_findings_markdown(findings, spec_title=spec.title))
     else:
         _print_human(findings, identity_a, identity_b, args.sequences)
 
     return 1 if findings else 0
+
+
+def _save_baseline(
+    *,
+    path: Path,
+    spec_path: Path,
+    spec_title: str,
+    args: argparse.Namespace,
+    identities: list[Identity],
+    findings: tuple,
+) -> None:
+    """Write the expected findings to a baseline JSON file for regression."""
+    payload = {
+        "spec": str(spec_path),
+        "spec_title": spec_title,
+        "options": {
+            "sequences": args.sequences,
+            "privileged_operations": list(args.privileged_operations),
+            "allowed_transitions": list(args.allowed_transition),
+            "max_requests": args.max_requests,
+            "base_url": args.base_url,
+        },
+        "identities": [{"name": i.name} for i in identities],
+        "expected_findings": [
+            {"id": f.id, "type": f.type.value} for f in findings
+        ],
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    print(f"Baseline saved to {path}", file=sys.stderr)
 
 
 def _print_human(findings, identity_a: Identity, identity_b: Identity, sequences: bool) -> None:

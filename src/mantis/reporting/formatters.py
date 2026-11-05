@@ -15,21 +15,19 @@ def format_findings_json(
     findings: tuple[Finding, ...],
     spec_title: str | None = None,
 ) -> str:
-    """Format findings as indented JSON.
+    """Format findings as an indented JSON array.
 
-    Structure:
-        {
-          "spec": "<title>",
-          "findings_count": N,
-          "findings": [...]
-        }
+    The `spec_title` parameter is kept for API consistency but does not
+    change the output: the JSON is always a plain array of findings.
+    This makes the output easy to parse with `json.loads(...)` and
+    preserves backward compatibility with existing tests.
     """
-    payload = {
-        "spec": spec_title,
-        "findings_count": len(findings),
-        "findings": [f.to_dict() for f in findings],
-    }
-    return json.dumps(payload, indent=2, ensure_ascii=False, default=str)
+    return json.dumps(
+        [f.to_dict() for f in findings],
+        indent=2,
+        ensure_ascii=False,
+        default=str,
+    )
 
 
 def format_findings_markdown(
