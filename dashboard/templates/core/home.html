@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col">
+        <h1 class="mantis-page-title">
+            <i class="bi bi-speedometer2 me-2"></i>Dashboard
+        </h1>
+        <p class="text-muted">Overview of MANTIS security scans.</p>
+    </div>
+</div>
+
+<div class="alert mantis-alert" role="alert">
+    <i class="bi bi-info-circle me-2"></i>
+    Welcome to MANTIS Mission Control. Modules are being implemented in MK-008.
+</div>
+
+<div class="row g-4">
+    <div class="col-md-4">
+        <div class="card mantis-card">
+            <div class="card-body">
+                <h5 class="card-title"><i class="bi bi-radar me-2"></i>Scans</h5>
+                <p class="card-text text-muted">Run and review security scans.</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card mantis-card">
+            <div class="card-body">
+                <h5 class="card-title"><i class="bi bi-exclamation-triangle me-2"></i>Findings</h5>
+                <p class="card-text text-muted">Vulnerabilities detected: BOLA, BFLA, state skip.</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card mantis-card">
+            <div class="card-body">
+                <h5 class="card-title"><i class="bi bi-file-earmark-text me-2"></i>Reports</h5>
+                <p class="card-text text-muted">Export and review reports.</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
