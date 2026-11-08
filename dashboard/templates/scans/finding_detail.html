@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block title %}{{ finding.finding_id }}{% endblock %}
+
+{% block content %}
+<h1 class="mantis-page-title mb-2">
+    <span class="badge mantis-badge-{{ finding.type|lower }} me-2">{{ finding.type }}</span>
+    {{ finding.finding_id }}
+</h1>
+
+<div class="row mb-4">
+    <div class="col-md-3"><strong>Severity:</strong> <span class="badge mantis-badge-{{ finding.severity }}">{{
+            finding.severity }}</span></div>
+    <div class="col-md-3"><strong>Confidence:</strong> {{ finding.confidence }}</div>
+    <div class="col-md-6"><strong>Operation:</strong>
+        <code>{{ finding.operation_method }} {{ finding.operation_path }}</code>
+    </div>
+</div>
+
+<h2 class="h5">Summary</h2>
+<p>{{ finding.summary }}</p>
+
+<h2 class="h5">Details</h2>
+<p>{{ finding.details }}</p>
+
+<h2 class="h5">Evidence</h2>
+<ul>
+    {% for ev in finding.evidence_json %}
+    <li>
+        {{ ev.description }}<br>
+        <code>{{ ev.method }} {{ ev.url }}</code> → <strong>{{ ev.status }}</strong>
+    </li>
+    {% endfor %}
+</ul>
+
+<h2 class="h5">Reproduction</h2>
+<ol>
+    {% for step in finding.reproduction_json %}
+    <li>{{ step }}</li>
+    {% endfor %}
+</ol>
+{% endblock %}

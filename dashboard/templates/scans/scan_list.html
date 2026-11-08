@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}Scans{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="mantis-page-title"><i class="bi bi-radar me-2"></i>Scans</h1>
+    <a href="{% url 'scans:new' %}" class="btn btn-mantis">
+        <i class="bi bi-plus-lg me-1"></i>New Scan
+    </a>
+</div>
+
+{% if scans %}
+<table class="table table-dark table-hover mantis-table">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Spec</th>
+            <th>Status</th>
+            <th>Findings</th>
+            <th>Created</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for scan in scans %}
+        <tr>
+            <td>#{{ scan.pk }}</td>
+            <td>{{ scan.spec_title|default:scan.spec_path }}</td>
+            <td>
+                <span class="badge mantis-badge-{{ scan.status }}">{{ scan.status }}</span>
+            </td>
+            <td>{{ scan.findings_count }}</td>
+            <td>{{ scan.created_at|date:"Y-m-d H:i:s" }}</td>
+            <td>
+                <a href="{% url 'scans:detail' scan.pk %}" class="btn btn-sm btn-outline-light">View</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="alert mantis-alert">
+    No scans yet. <a href="{% url 'scans:new' %}" class="alert-link">Create the first one</a>.
+</div>
+{% endif %}
+{% endblock %}

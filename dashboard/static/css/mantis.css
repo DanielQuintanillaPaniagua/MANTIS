@@ -89,3 +89,85 @@ body {
     border-top: 1px solid var(--mantis-border);
     color: var(--mantis-text-muted);
 }
+
+.btn-mantis {
+    background-color: var(--mantis-green);
+    border-color: var(--mantis-green);
+    color: white;
+}
+
+.btn-mantis:hover {
+    background-color: var(--mantis-green-light);
+    border-color: var(--mantis-green-light);
+    color: white;
+}
+
+.mantis-table {
+    background-color: var(--mantis-dark);
+}
+
+.mantis-form input,
+.mantis-form textarea,
+.mantis-form select {
+    background-color: var(--mantis-dark);
+    border: 1px solid var(--mantis-border);
+    color: var(--mantis-text);
+}
+
+.mantis-form input:focus {
+    background-color: var(--mantis-dark);
+    border-color: var(--mantis-green);
+    color: var(--mantis-text);
+    box-shadow: 0 0 0 0.2rem rgba(46, 160, 67, 0.25);
+}
+
+/* Badges */
+.mantis-badge-completed {
+    background-color: var(--mantis-green);
+    color: white;
+}
+
+.mantis-badge-running {
+    background-color: var(--mantis-amber);
+    color: black;
+}
+
+.mantis-badge-pending {
+    background-color: var(--mantis-text-muted);
+    color: black;
+}
+
+.mantis-badge-failed {
+    background-color: var(--mantis-red);
+    color: white;
+}
+
+.mantis-badge-high {
+    background-color: var(--mantis-red);
+    color: white;
+}
+
+.mantis-badge-medium {
+    background-color: var(--mantis-amber);
+    color: black;
+}
+
+.mantis-badge-low {
+    background-color: var(--mantis-text-muted);
+    color: black;
+}
+
+.mantis-badge-bola {
+    background-color: #1f6feb;
+    color: white;
+}
+
+.mantis-badge-bfla {
+    background-color: #8957e5;
+    color: white;
+}
+
+.mantis-badge-state_skip {
+    background-color: #d29922;
+    color: black;
+}

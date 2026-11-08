@@ -12,6 +12,10 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 
 from pathlib import Path
 
+import sys
+# Add the MANTIS engine to the Python path
+MANTIS_ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(MANTIS_ROOT / "src"))
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
