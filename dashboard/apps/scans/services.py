@@ -12,7 +12,8 @@ from __future__ import annotations
 import datetime
 
 from django.utils import timezone
-
+from django.conf import settings
+from pathlib import Path
 from mantis.analysis.authorization import Identity, detect_bola
 from mantis.analysis.models import Finding
 from mantis.analysis.sequences import detect_bfla, detect_state_skip
@@ -80,7 +81,10 @@ def _execute_engine(scan: Scan, identity_a_key: str, identity_b_key: str) -> tup
         config_kwargs["allowed_transitions"] = tuple(options["allowed_transitions"])
     config = MantisConfig(**config_kwargs)
 
-    data = load_spec(scan.spec_path, config=config)
+    spec_path = Path(scan.spec_path)
+    if not spec_path.is_absolute():
+        spec_path = settings.MANTIS_ROOT / spec_path
+    data = load_spec(spec_path, config=config)
     spec = parse_spec(data)
 
     identity_a = Identity(scan.identity_a, identity_a_key, scan.base_url)
