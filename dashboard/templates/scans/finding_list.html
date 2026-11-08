@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block title %}Findings{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="mantis-page-title"><i class="bi bi-exclamation-triangle me-2"></i>Findings</h1>
+</div>
+
+<!-- Filters -->
+<form method="get" class="row g-2 mb-4">
+    <div class="col-auto">
+        <select name="type" class="form-select form-select-sm bg-dark text-light border-secondary">
+            <option value="">All types</option>
+            {% for t in all_types %}
+            <option value="{{ t }}">{{ t }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-auto">
+        <select name="severity" class="form-select form-select-sm bg-dark text-light border-secondary">
+            <option value="">All severities</option>
+            {% for s in all_severities %}
+            <option value="{{ s }}">{{ s }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-auto">
+        <button type="submit" class="btn btn-sm btn-mantis">Filter</button>
+    </div>
+</form>
+
+{% if findings %}
+<table class="table table-dark table-hover mantis-table">
+    <thead>
+        <tr>
+            <th>Type</th>
+            <th>Severity</th>
+            <th>Operation</th>
+            <th>Identity</th>
+            <th>Scan</th>
+            <th>Summary</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for f in findings %}
+        <tr>
+            <td><span class="badge mantis-badge-{{ f.type|lower }}">{{ f.type }}</span></td>
+            <td><span class="badge mantis-badge-{{ f.severity }}">{{ f.severity }}</span></td>
+            <td><code>{{ f.operation_method }} {{ f.operation_path }}</code></td>
+            <td>{{ f.identity }}</td>
+            <td><a href="{% url 'scans:detail' f.scan.pk %}" class="text-decoration-none">#{{ f.scan.pk }}</a></td>
+            <td>{{ f.summary|truncatechars:60 }}</td>
+            <td><a href="{% url 'scans:finding_detail' f.pk %}" class="btn btn-sm btn-outline-light">Details</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="alert mantis-alert">No findings match the filter.</div>
+{% endif %}
+{% endblock %}

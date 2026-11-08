@@ -56,3 +56,26 @@ def scan_new(request):
 def finding_detail(request, pk):
     finding = get_object_or_404(FindingRecord, pk=pk)
     return render(request, "scans/finding_detail.html", {"finding": finding})
+def finding_list(request):
+    """Global list of findings, filterable by type and severity."""
+    findings = FindingRecord.objects.select_related("scan").all()
+
+    type_filter = request.GET.get("type", "")
+    severity_filter = request.GET.get("severity", "")
+
+    if type_filter:
+        findings = findings.filter(type=type_filter)
+    if severity_filter:
+        findings = findings.filter(severity=severity_filter)
+
+    return render(
+        request,
+        "scans/finding_list.html",
+        {
+            "findings": findings,
+            "type_filter": type_filter,
+            "severity_filter": severity_filter,
+            "all_types": [t[0] for t in FindingRecord.TYPE_CHOICES],
+            "all_severities": [s[0] for s in FindingRecord.SEVERITY_CHOICES],
+        },
+    )
