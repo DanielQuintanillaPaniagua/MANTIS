@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Reports{% endblock %}
+
+{% block content %}
+<h1 class="mantis-page-title mb-4"><i class="bi bi-file-earmark-text me-2"></i>Reports</h1>
+
+{% if reports %}
+<table class="table table-dark table-hover mantis-table">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Scan</th>
+            <th>Format</th>
+            <th>Created</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in reports %}
+        <tr>
+            <td>#{{ r.pk }}</td>
+            <td><a href="{% url 'scans:detail' r.scan.pk %}" class="text-decoration-none">Scan #{{ r.scan.pk }}</a></td>
+            <td><span class="badge bg-secondary">{{ r.format }}</span></td>
+            <td>{{ r.created_at|date:"Y-m-d H:i" }}</td>
+            <td><a href="{% url 'reports:download' r.pk %}" class="btn btn-sm btn-outline-light">Download</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="alert mantis-alert">
+    No reports yet. Reports are generated from the CLI using <code>mantis scan --format json --save-baseline ...</code>.
+</div>
+{% endif %}
+{% endblock %}

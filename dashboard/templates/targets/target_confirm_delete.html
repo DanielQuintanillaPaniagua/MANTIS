@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block title %}Delete Target{% endblock %}
+
+{% block content %}
+<h1 class="mantis-page-title mb-4">Delete Target</h1>
+<p>Are you sure you want to delete <strong>{{ target.name }}</strong>?</p>
+<form method="post">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-danger">Yes, delete</button>
+    <a href="{% url 'targets:list' %}" class="btn btn-outline-secondary">Cancel</a>
+</form>
+{% endblock %}

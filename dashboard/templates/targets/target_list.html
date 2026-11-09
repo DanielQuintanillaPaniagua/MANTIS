@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}Targets{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="mantis-page-title"><i class="bi bi-crosshair me-2"></i>Targets</h1>
+    <a href="{% url 'targets:new' %}" class="btn btn-mantis">
+        <i class="bi bi-plus-lg me-1"></i>New Target
+    </a>
+</div>
+
+{% if targets %}
+<table class="table table-dark table-hover mantis-table">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Base URL</th>
+            <th>Authorized</th>
+            <th>Created</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for t in targets %}
+        <tr>
+            <td>{{ t.name }}</td>
+            <td><code>{{ t.base_url }}</code></td>
+            <td>
+                {% if t.authorized %}
+                <span class="badge bg-success">Yes</span>
+                {% else %}
+                <span class="badge bg-secondary">No</span>
+                {% endif %}
+            </td>
+            <td>{{ t.created_at|date:"Y-m-d" }}</td>
+            <td>
+                <a href="{% url 'targets:edit' t.pk %}" class="btn btn-sm btn-outline-light">Edit</a>
+                <a href="{% url 'targets:delete' t.pk %}" class="btn btn-sm btn-outline-danger">Delete</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="alert mantis-alert">
+    No targets yet. <a href="{% url 'targets:new' %}" class="alert-link">Add the first one</a>.
+</div>
+{% endif %}
+{% endblock %}
