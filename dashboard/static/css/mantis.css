@@ -1,173 +1,349 @@
+/* =========================================
+   MANTIS MISSION CONTROL - CYBER THEME
+   ========================================= */
+
 :root {
-    --mantis-black: #0d1117;
-    --mantis-dark: #161b22;
-    --mantis-green: #2ea043;
-    --mantis-green-light: #3fb950;
-    --mantis-amber: #d29922;
-    --mantis-red: #f85149;
-    --mantis-text: #e6edf3;
-    --mantis-text-muted: #8b949e;
-    --mantis-border: #30363d;
+    --mc-bg: #050505;
+    --mc-panel: #111111;
+    --mc-border: #222222;
+
+    /* Neon Colors */
+    --mc-green: #00ff41;
+    --mc-green-dim: rgba(0, 255, 65, 0.1);
+    --mc-amber: #ffb000;
+    --mc-red: #ff003c;
+    --mc-blue: #00d4ff;
+
+    --mc-text: #e0e0e0;
+    --mc-muted: #888888;
+
+    --font-mono: 'Share Tech Mono', monospace;
+    --font-display: 'Orbitron', sans-serif;
 }
 
 body {
-    background-color: var(--mantis-black);
-    color: var(--mantis-text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: var(--mc-bg);
+    color: var(--mc-text);
+    font-family: var(--font-mono);
+    overflow-x: hidden;
 }
 
-.mantis-navbar {
-    background-color: var(--mantis-dark);
-    border-bottom: 1px solid var(--mantis-border);
+/* Sidebar */
+.mantis-sidebar {
+    width: 260px;
+    min-height: 100vh;
+    background: var(--mc-panel);
+    border-right: 1px solid var(--mc-border);
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    z-index: 1000;
 }
 
-.mantis-navbar .navbar-brand {
-    color: var(--mantis-text);
-    text-decoration: none;
-}
-
-.mantis-navbar .navbar-brand i {
-    color: var(--mantis-green);
-    font-size: 1.4rem;
+.sidebar-header {
+    padding: 20px;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    border-bottom: 1px solid var(--mc-border);
 }
 
 .mantis-brand {
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    color: var(--mantis-green);
+    font-family: var(--font-display);
+    font-size: 1.5rem;
+    font-weight: 900;
+    letter-spacing: 2px;
+    color: var(--mc-text);
+    line-height: 1;
 }
 
 .mantis-subtitle {
     font-size: 0.75rem;
-    color: var(--mantis-text-muted);
+    color: var(--mc-green);
+    letter-spacing: 1px;
+}
+
+.sidebar-nav {
+    padding: 0 15px;
+}
+
+.nav-item {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 12px 15px;
+    color: var(--mc-muted);
+    text-decoration: none;
+    font-size: 1.1rem;
+    border-radius: 5px;
+    transition: all 0.2s;
+    margin-bottom: 5px;
+}
+
+.nav-item:hover,
+.nav-item.active {
+    background: var(--mc-green-dim);
+    color: var(--mc-green);
+    text-shadow: 0 0 8px rgba(0, 255, 65, 0.4);
+}
+
+.sidebar-footer {
+    padding: 20px;
+    border-top: 1px solid var(--mc-border);
+    font-size: 0.85rem;
+}
+
+.status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    background-color: var(--mc-green);
+    border-radius: 50%;
+    margin-right: 5px;
+    box-shadow: 0 0 10px var(--mc-green);
+}
+
+/* Main Content Area */
+.mantis-content {
+    margin-left: 260px;
+    /* Sidebar width */
+    min-height: 100vh;
+    background: radial-gradient(circle at top right, rgba(0, 255, 65, 0.03) 0%, transparent 40%);
+}
+
+/* Topbar */
+.mantis-topbar {
+    height: 70px;
+    padding: 0 30px;
+    border-bottom: 1px solid var(--mc-border);
+    background: rgba(5, 5, 5, 0.8);
+    backdrop-filter: blur(10px);
+}
+
+.search-bar input {
+    background: transparent;
+    border: none;
+    color: var(--mc-text);
+    outline: none;
+    width: 300px;
+}
+
+/* Typography & Headers */
+h1,
+h2,
+h3,
+h4 {
+    font-family: var(--font-display);
+    color: white;
     text-transform: uppercase;
-    letter-spacing: 0.15em;
-}
-
-.mantis-navbar .nav-link {
-    color: var(--mantis-text-muted);
-    transition: color 0.15s;
-}
-
-.mantis-navbar .nav-link:hover {
-    color: var(--mantis-green-light);
-}
-
-.mantis-main {
-    min-height: calc(100vh - 120px);
+    letter-spacing: 1px;
 }
 
 .mantis-page-title {
-    font-weight: 600;
-    color: var(--mantis-text);
+    border-bottom: 2px solid var(--mc-green);
+    display: inline-block;
+    padding-bottom: 5px;
+    margin-bottom: 20px;
+    text-shadow: 0 0 15px rgba(0, 255, 65, 0.3);
 }
 
+/* Cards & Panels */
 .mantis-card {
-    background-color: var(--mantis-dark);
-    border: 1px solid var(--mantis-border);
-    transition: border-color 0.15s, transform 0.15s;
+    background: var(--mc-panel);
+    border: 1px solid var(--mc-border);
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    transition: all 0.3s;
+    position: relative;
+    overflow: hidden;
+}
+
+.mantis-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--mc-green), transparent);
+    opacity: 0.5;
 }
 
 .mantis-card:hover {
-    border-color: var(--mantis-green);
-    transform: translateY(-2px);
+    border-color: rgba(0, 255, 65, 0.3);
+    box-shadow: 0 4px 25px rgba(0, 255, 65, 0.1);
 }
 
 .mantis-card .card-title {
-    color: var(--mantis-text);
-    font-weight: 600;
+    font-family: var(--font-display);
+    font-size: 1rem;
+    color: var(--mc-green);
 }
 
-.mantis-alert {
-    background-color: rgba(46, 160, 67, 0.1);
-    border: 1px solid var(--mantis-green);
-    color: var(--mantis-text);
-}
-
-.mantis-footer {
-    background-color: var(--mantis-dark);
-    border-top: 1px solid var(--mantis-border);
-    color: var(--mantis-text-muted);
-}
-
-.btn-mantis {
-    background-color: var(--mantis-green);
-    border-color: var(--mantis-green);
-    color: white;
-}
-
-.btn-mantis:hover {
-    background-color: var(--mantis-green-light);
-    border-color: var(--mantis-green-light);
-    color: white;
-}
-
+/* Tables */
 .mantis-table {
-    background-color: var(--mantis-dark);
+    background: transparent;
+    --bs-table-bg: transparent;
+    --bs-table-color: var(--mc-text);
+    --bs-table-hover-bg: rgba(0, 255, 65, 0.05);
+    --bs-table-hover-color: var(--mc-green);
+    border-color: var(--mc-border);
 }
 
-.mantis-form input,
-.mantis-form textarea,
-.mantis-form select {
-    background-color: var(--mantis-dark);
-    border: 1px solid var(--mantis-border);
-    color: var(--mantis-text);
+.mantis-table thead th {
+    font-family: var(--font-display);
+    color: var(--mc-muted);
+    border-bottom: 1px solid var(--mc-border);
+    text-transform: uppercase;
+    font-size: 0.85rem;
+    letter-spacing: 1px;
 }
 
-.mantis-form input:focus {
-    background-color: var(--mantis-dark);
-    border-color: var(--mantis-green);
-    color: var(--mantis-text);
-    box-shadow: 0 0 0 0.2rem rgba(46, 160, 67, 0.25);
+.mantis-table td {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    vertical-align: middle;
+}
+
+code {
+    color: var(--mc-blue);
+    background: rgba(0, 212, 255, 0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
 }
 
 /* Badges */
+.badge {
+    font-family: var(--font-mono);
+    border: 1px solid transparent;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
 .mantis-badge-completed {
-    background-color: var(--mantis-green);
-    color: white;
+    background: var(--mc-green-dim);
+    color: var(--mc-green);
+    border-color: var(--mc-green);
 }
 
 .mantis-badge-running {
-    background-color: var(--mantis-amber);
-    color: black;
+    background: rgba(255, 176, 0, 0.1);
+    color: var(--mc-amber);
+    border-color: var(--mc-amber);
 }
 
 .mantis-badge-pending {
-    background-color: var(--mantis-text-muted);
-    color: black;
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--mc-muted);
+    border-color: var(--mc-muted);
 }
 
 .mantis-badge-failed {
-    background-color: var(--mantis-red);
-    color: white;
+    background: rgba(255, 0, 60, 0.1);
+    color: var(--mc-red);
+    border-color: var(--mc-red);
 }
 
 .mantis-badge-high {
-    background-color: var(--mantis-red);
-    color: white;
+    background: rgba(255, 0, 60, 0.1);
+    color: var(--mc-red);
+    border-color: var(--mc-red);
+    box-shadow: 0 0 10px rgba(255, 0, 60, 0.3);
 }
 
 .mantis-badge-medium {
-    background-color: var(--mantis-amber);
-    color: black;
+    background: rgba(255, 176, 0, 0.1);
+    color: var(--mc-amber);
+    border-color: var(--mc-amber);
 }
 
 .mantis-badge-low {
-    background-color: var(--mantis-text-muted);
-    color: black;
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--mc-muted);
+    border-color: var(--mc-muted);
 }
 
 .mantis-badge-bola {
-    background-color: #1f6feb;
-    color: white;
+    background: rgba(0, 212, 255, 0.1);
+    color: var(--mc-blue);
+    border-color: var(--mc-blue);
 }
 
 .mantis-badge-bfla {
-    background-color: #8957e5;
-    color: white;
+    background: rgba(137, 87, 229, 0.1);
+    color: #a47cf5;
+    border-color: #8957e5;
 }
 
 .mantis-badge-state_skip {
-    background-color: #d29922;
+    background: rgba(255, 176, 0, 0.1);
+    color: var(--mc-amber);
+    border-color: var(--mc-amber);
+}
+
+/* Buttons */
+.btn-mantis {
+    background-color: transparent;
+    border: 1px solid var(--mc-green);
+    color: var(--mc-green);
+    font-family: var(--font-display);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-size: 0.85rem;
+    padding: 8px 16px;
+    transition: all 0.3s;
+}
+
+.btn-mantis:hover {
+    background-color: var(--mc-green);
     color: black;
+    box-shadow: 0 0 15px rgba(0, 255, 65, 0.5);
+}
+
+.btn-outline-light {
+    border-color: var(--mc-border);
+    color: var(--mc-muted);
+}
+
+.btn-outline-light:hover {
+    background: var(--mc-text);
+    color: black;
+}
+
+.btn-outline-danger {
+    border-color: rgba(255, 0, 60, 0.5);
+    color: var(--mc-red);
+}
+
+.btn-outline-danger:hover {
+    background: var(--mc-red);
+    color: white;
+    box-shadow: 0 0 15px rgba(255, 0, 60, 0.5);
+}
+
+/* Forms */
+.mantis-form input,
+.mantis-form textarea,
+.mantis-form select {
+    background-color: rgba(0, 0, 0, 0.5);
+    border: 1px solid var(--mc-border);
+    color: var(--mc-text);
+    border-radius: 4px;
+}
+
+.mantis-form input:focus,
+.mantis-form textarea:focus,
+.mantis-form select:focus {
+    background-color: rgba(0, 255, 65, 0.05);
+    border-color: var(--mc-green);
+    color: var(--mc-green);
+    box-shadow: 0 0 10px rgba(0, 255, 65, 0.2);
+}
+
+/* Alerts */
+.mantis-alert {
+    background-color: rgba(0, 255, 65, 0.05);
+    border: 1px solid var(--mc-green);
+    color: var(--mc-text);
+    border-left: 4px solid var(--mc-green);
 }
