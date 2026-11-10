@@ -6,7 +6,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from .forms import ScanForm
 from .models import FindingRecord, Scan
 from .services import run_scan
-
+from django.db.models import Q
 
 def scan_list(request):
     scans = Scan.objects.all()
@@ -57,16 +57,23 @@ def finding_detail(request, pk):
     finding = get_object_or_404(FindingRecord, pk=pk)
     return render(request, "scans/finding_detail.html", {"finding": finding})
 def finding_list(request):
-    """Global list of findings, filterable by type and severity."""
+    """Global list of findings, filterable by type, severity and text search."""
     findings = FindingRecord.objects.select_related("scan").all()
 
     type_filter = request.GET.get("type", "")
     severity_filter = request.GET.get("severity", "")
+    query = request.GET.get("q", "")
 
     if type_filter:
         findings = findings.filter(type=type_filter)
     if severity_filter:
         findings = findings.filter(severity=severity_filter)
+    if query:
+        findings = findings.filter(
+            Q(summary__icontains=query) | 
+            Q(operation_path__icontains=query) |
+            Q(finding_id__icontains=query)
+        )
 
     return render(
         request,
@@ -75,6 +82,7 @@ def finding_list(request):
             "findings": findings,
             "type_filter": type_filter,
             "severity_filter": severity_filter,
+            "query": query,
             "all_types": [t[0] for t in FindingRecord.TYPE_CHOICES],
             "all_severities": [s[0] for s in FindingRecord.SEVERITY_CHOICES],
         },

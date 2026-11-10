@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+﻿{% extends "base.html" %}
 
 {% block title %}Findings{% endblock %}
 
@@ -7,13 +7,20 @@
     <h1 class="mantis-page-title"><i class="bi bi-exclamation-triangle me-2"></i>Findings</h1>
 </div>
 
-<!-- Filters -->
+{% if query %}
+<div class="mb-3 text-muted font-monospace">
+    <i class="bi bi-search me-2"></i>Showing results for "<strong class="text-light">{{ query }}</strong>"
+</div>
+{% endif %}
+
 <form method="get" class="row g-2 mb-4">
+    <input type="hidden" name="q" value="{{ query }}">
+
     <div class="col-auto">
         <select name="type" class="form-select form-select-sm bg-dark text-light border-secondary">
             <option value="">All types</option>
             {% for t in all_types %}
-            <option value="{{ t }}">{{ t }}</option>
+            <option value="{{ t }}" {% if type_filter == t %}selected{% endif %}>{{ t }}</option>
             {% endfor %}
         </select>
     </div>
@@ -21,12 +28,15 @@
         <select name="severity" class="form-select form-select-sm bg-dark text-light border-secondary">
             <option value="">All severities</option>
             {% for s in all_severities %}
-            <option value="{{ s }}">{{ s }}</option>
+            <option value="{{ s }}" {% if severity_filter == s %}selected{% endif %}>{{ s }}</option>
             {% endfor %}
         </select>
     </div>
     <div class="col-auto">
         <button type="submit" class="btn btn-sm btn-mantis">Filter</button>
+        {% if query or type_filter or severity_filter %}
+            <a href="{% url 'scans:finding_list' %}" class="btn btn-sm btn-outline-secondary ms-2">Clear</a>
+        {% endif %}
     </div>
 </form>
 
@@ -58,6 +68,8 @@
     </tbody>
 </table>
 {% else %}
-<div class="alert mantis-alert">No findings match the filter.</div>
+<div class="alert mantis-alert">
+    <i class="bi bi-info-circle me-2"></i>No findings match the filter or search.
+</div>
 {% endif %}
 {% endblock %}

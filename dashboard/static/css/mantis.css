@@ -118,6 +118,8 @@ body {
     border-bottom: 1px solid var(--mc-border);
     background: rgba(5, 5, 5, 0.8);
     backdrop-filter: blur(10px);
+    position: relative;
+    z-index: 1030;
 }
 
 .search-bar input {
@@ -346,4 +348,26 @@ code {
     border: 1px solid var(--mc-green);
     color: var(--mc-text);
     border-left: 4px solid var(--mc-green);
+}
+
+.dropdown-menu {
+    z-index: 1050;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8) !important;
+}
+
+.dropdown-item:hover {
+    background-color: var(--mc-green-dim);
+    color: var(--mc-green);
+}
+
+.dropdown-header {
+    border-bottom: 1px solid var(--mc-border);
+    margin-bottom: 5px;
+}
+
+/* Fix Dropdown z-index */
+.dropdown-menu {
+    z-index: 1050 !important;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.9) !important;
+    border: 1px solid var(--mc-green) !important;
 }

@@ -65,14 +65,61 @@
         <div class="mantis-content w-100">
             <!-- Topbar -->
             <header class="mantis-topbar d-flex justify-content-between align-items-center">
-                <div class="search-bar">
+                <form class="search-bar" action="{% url 'scans:finding_list' %}" method="get">
                     <i class="bi bi-search me-2 text-muted"></i>
-                    <input type="text" placeholder="Search scans, findings..." disabled>
-                </div>
-                <div class="user-profile d-flex align-items-center">
-                    <i class="bi bi-bell-fill text-muted me-4"></i>
-                    <i class="bi bi-person-circle fs-4 text-success"></i>
-                    <span class="ms-2 font-monospace text-light">Operator</span>
+                    <input type="text" name="q" placeholder="Search findings..." value="{{ request.GET.q|default:'' }}">
+                </form>
+                <div class="user-profile d-flex align-items-center position-relative">
+
+                    <!-- Notificaciones -->
+                    <div class="dropdown me-4">
+                        <a href="#" class="text-muted position-relative" data-bs-toggle="dropdown" aria-expanded="false"
+                            style="text-decoration: none;">
+                            <i class="bi bi-bell-fill fs-5"></i>
+                            {% if notifications_count > 0 %}
+                            <span
+                                class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger"
+                                style="font-size: 0.6rem; padding: 3px 5px;">
+                                {{ notifications_count }}
+                            </span>
+                            {% endif %}
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end shadow-lg"
+                            style="width: 320px; background: var(--mc-panel); border: 1px solid var(--mc-border); margin-top: 15px;">
+                            <li>
+                                <h6 class="dropdown-header text-uppercase"
+                                    style="color: var(--mc-green); font-family: var(--font-display);">System Alerts</h6>
+                            </li>
+
+                            {% for notif in notifications_list %}
+                            <li>
+                                <a class="dropdown-item d-flex align-items-start gap-2 py-2"
+                                    href="{% url 'scans:list' %}" style="white-space: normal;">
+                                    <i class="bi {{ notif.icon }} text-{{ notif.type }} mt-1"></i>
+                                    <div>
+                                        <div class="text-light" style="font-size: 0.85rem;">{{ notif.text }}</div>
+                                        <div class="text-muted small" style="font-size: 0.7rem;">{{
+                                            notif.time|date:"H:i" }}</div>
+                                    </div>
+                                </a>
+                            </li>
+                            {% empty %}
+                            <li><span class="dropdown-item text-muted small py-3 text-center">No new alerts.</span></li>
+                            {% endfor %}
+
+                            <li>
+                                <hr class="dropdown-divider border-secondary">
+                            </li>
+                            <li><a class="dropdown-item text-center small text-muted" href="{% url 'scans:list' %}">View
+                                    all scans</a></li>
+                        </ul>
+                    </div>
+                    <!-- Fin Notificaciones -->
+
+                    <div class="d-flex align-items-center border-start border-secondary ps-4">
+                        <i class="bi bi-person-circle fs-4 text-success"></i>
+                        <span class="ms-2 font-monospace text-light">Operator</span>
+                    </div>
                 </div>
             </header>
 
