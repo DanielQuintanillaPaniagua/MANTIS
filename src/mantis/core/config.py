@@ -42,6 +42,12 @@ class MantisConfig:
     )
     privileged_operations: tuple[str, ...] = ()
     allowed_transitions: tuple[str, ...] = ()
+        # Configuración de endpoints y campos
+    identity_endpoints: tuple[str, ...] = ("/me", "/users/me", "/profile")
+    resource_id_field: str = "id"
+    
+    # Configuración de reset (opcional)
+    reset_endpoint: str | None = None
 
 
     def __post_init__(self) -> None:
@@ -61,5 +67,7 @@ class MantisConfig:
             raise ValueError("ownership_fields must not be empty")
         if not self.state_fields:
             raise ValueError("state_fields must not be empty")
+        if not self.resource_id_field:
+            raise ValueError("resource_id_field must not be empty")
         # privileged_operations can be empty; no validation needed.
         # It is a user-provided list of path substrings.

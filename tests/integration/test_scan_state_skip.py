@@ -34,7 +34,12 @@ def _require_lab():
 
 
 def _config() -> MantisConfig:
-    return MantisConfig(max_requests=200, requests_per_minute=200)
+    return MantisConfig(
+        max_requests=200,
+        requests_per_minute=200,
+        reset_endpoint="/lab/reset",
+        identity_endpoints=("/me",),
+    )
 
 
 def _load_spec():
@@ -72,6 +77,9 @@ def test_state_skip_is_deterministic():
     assert ids_a == ids_b
 def test_state_skip_with_allowed_transitions():
     """With allowed_transitions declared, state skip is detected correctly."""
+    # RESETEAR EL LAB PARA ASEGURAR QUE HAY UN DRAFT
+    httpx.post(f"{LAB_URL}/lab/reset", headers={"X-API-Key": ADMIN_KEY}, timeout=2.0)
+
     spec = _load_spec()
     admin = Identity("admin", ADMIN_KEY, LAB_URL)
     config = MantisConfig(
@@ -81,7 +89,16 @@ def test_state_skip_with_allowed_transitions():
             "status:draft->submitted",
             "status:submitted->approved",
         ),
+        reset_endpoint="/lab/reset",
+        identity_endpoints=("/me",),
     )
+
+    with MantisClient(config) as client:
+        findings = detect_state_skip(spec, client, config, admin)
+
+    assert len(findings) >= 1
+    assert all(f.type.value == "STATE_SKIP" for f in findings)
+    assert all("/approve" in f.operation_path for f in findings)
 
     with MantisClient(config) as client:
         findings = detect_state_skip(spec, client, config, admin)

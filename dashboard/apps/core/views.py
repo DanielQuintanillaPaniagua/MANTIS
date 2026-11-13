@@ -4,6 +4,8 @@ from django.db.models import Count
 from django.shortcuts import render
 
 from apps.scans.models import FindingRecord, Scan
+from django.contrib.auth.decorators import login_required
+@login_required
 
 
 def home(request):

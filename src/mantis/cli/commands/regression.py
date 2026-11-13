@@ -233,6 +233,10 @@ def _config_from_baseline(baseline: dict) -> MantisConfig:
         kwargs["privileged_operations"] = tuple(options["privileged_operations"])
     if options.get("allowed_transitions"):
         kwargs["allowed_transitions"] = tuple(options["allowed_transitions"])
+    if options.get("reset_endpoint"):
+        kwargs["reset_endpoint"] = options["reset_endpoint"]
+    if options.get("identity_endpoints"):
+        kwargs["identity_endpoints"] = tuple(options["identity_endpoints"])
     return MantisConfig(**kwargs)
 
 

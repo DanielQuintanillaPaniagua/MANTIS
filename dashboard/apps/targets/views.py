@@ -5,6 +5,8 @@ from django.shortcuts import get_object_or_404, redirect, render
 
 from .forms import TargetForm
 from .models import TargetRecord
+from django.contrib.auth.decorators import login_required
+@login_required
 
 
 def target_list(request):

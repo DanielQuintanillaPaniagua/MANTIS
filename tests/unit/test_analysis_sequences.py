@@ -1,10 +1,10 @@
-"""Unit tests for BFLA detection with MockTransport."""
+"""Unit tests for BFLA and state skip detection with MockTransport."""
 
 import httpx
 import pytest
 
 from mantis.analysis.authorization import Identity
-from mantis.analysis.sequences import detect_bfla
+from mantis.analysis.sequences import detect_bfla, detect_state_skip
 from mantis.core.config import MantisConfig
 from mantis.spec.models import (
     ApiSpec,
@@ -14,8 +14,6 @@ from mantis.spec.models import (
     ParameterLocation,
 )
 from mantis.transport.client import MantisClient
-from mantis.analysis.sequences import detect_bfla, detect_state_skip
-from mantis.analysis.sequences import detect_bfla, detect_state_skip
 
 
 ADMIN = Identity("admin", "lab-admin-key", "http://127.0.0.1:8000")
@@ -28,7 +26,13 @@ def _config() -> MantisConfig:
         max_requests=200,
         requests_per_minute=200,
         privileged_operations=("approve",),
+        reset_endpoint="/lab/reset",
+        identity_endpoints=("/me",),
     )
+
+
+def _client(handler, config: MantisConfig) -> MantisClient:
+    return MantisClient(config, transport=httpx.MockTransport(handler))
 
 
 def _spec() -> ApiSpec:
@@ -54,10 +58,6 @@ def _spec() -> ApiSpec:
         version="1.0.0",
         operations=(reset_op, read_op, approve_op),
     )
-
-
-def _client(handler, config: MantisConfig) -> MantisClient:
-    return MantisClient(config, transport=httpx.MockTransport(handler))
 
 
 def test_detects_bfla_when_employee_can_approve():
@@ -137,6 +137,7 @@ def test_no_bfla_without_privileged_operations():
         max_requests=200,
         requests_per_minute=200,
         privileged_operations=(),  # empty
+        reset_endpoint="/lab/reset",
     )
     with _client(handler, config) as client:
         findings = detect_bfla(_spec(), client, config, ADMIN, EMPLOYEE)
@@ -177,6 +178,42 @@ def test_no_bfla_without_reset_endpoint():
         findings = detect_bfla(spec_without_reset, client, config, ADMIN, EMPLOYEE)
 
     assert findings == ()
+
+
+# --- State skip ---
+
+def _spec_with_state_ops() -> ApiSpec:
+    """Spec with reset, GET, submit, and approve."""
+    reset_op = Operation(method=HttpMethod.POST, path="/lab/reset")
+    read_op = Operation(
+        method=HttpMethod.GET,
+        path="/invoices/{invoice_id}",
+        parameters=(
+            Parameter(name="invoice_id", location=ParameterLocation.PATH, required=True),
+        ),
+    )
+    submit_op = Operation(
+        method=HttpMethod.POST,
+        path="/invoices/{invoice_id}/submit",
+        parameters=(
+            Parameter(name="invoice_id", location=ParameterLocation.PATH, required=True),
+        ),
+    )
+    approve_op = Operation(
+        method=HttpMethod.POST,
+        path="/invoices/{invoice_id}/approve",
+        parameters=(
+            Parameter(name="invoice_id", location=ParameterLocation.PATH, required=True),
+        ),
+    )
+    return ApiSpec(
+        openapi_version="3.1.0",
+        title="Test",
+        version="1.0.0",
+        operations=(reset_op, read_op, submit_op, approve_op),
+    )
+
+
 def test_detects_state_skip_when_admin_approves_draft():
     """Admin approves a draft invoice directly (V3)."""
 
@@ -224,38 +261,6 @@ def test_detects_state_skip_when_admin_approves_draft():
     assert findings[0].confidence.value == "medium"
 
 
-def _spec_with_state_ops() -> ApiSpec:
-    """Spec with reset, GET, submit, and approve."""
-    reset_op = Operation(method=HttpMethod.POST, path="/lab/reset")
-    read_op = Operation(
-        method=HttpMethod.GET,
-        path="/invoices/{invoice_id}",
-        parameters=(
-            Parameter(name="invoice_id", location=ParameterLocation.PATH, required=True),
-        ),
-    )
-    submit_op = Operation(
-        method=HttpMethod.POST,
-        path="/invoices/{invoice_id}/submit",
-        parameters=(
-            Parameter(name="invoice_id", location=ParameterLocation.PATH, required=True),
-        ),
-    )
-    approve_op = Operation(
-        method=HttpMethod.POST,
-        path="/invoices/{invoice_id}/approve",
-        parameters=(
-            Parameter(name="invoice_id", location=ParameterLocation.PATH, required=True),
-        ),
-    )
-    return ApiSpec(
-        openapi_version="3.1.0",
-        title="Test",
-        version="1.0.0",
-        operations=(reset_op, read_op, submit_op, approve_op),
-    )
-
-
 def test_no_state_skip_if_approve_requires_submitted():
     """Correct behavior: approve on draft returns 409. No finding."""
 
@@ -294,6 +299,8 @@ def test_no_state_skip_if_approve_requires_submitted():
         findings = detect_state_skip(spec, client, config, ADMIN)
 
     assert findings == ()
+
+
 def test_state_skip_with_allowed_transitions_ignores_order():
     """If allowed_transitions is declared, spec order does not matter."""
 
@@ -364,6 +371,8 @@ def test_state_skip_with_allowed_transitions_ignores_order():
         max_requests=200,
         requests_per_minute=200,
         allowed_transitions=("status:draft->submitted", "status:submitted->approved"),
+        reset_endpoint="/lab/reset",
+        identity_endpoints=("/me",),
     )
     with _client(handler, config) as client:
         findings = detect_state_skip(spec, client, config, ADMIN)

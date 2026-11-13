@@ -124,6 +124,18 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         action="store_true",
         help="Do not write evidence to disk.",
     )
+    parser.add_argument(
+        "--reset-endpoint",
+        type=str,
+        default=None,
+        help="Endpoint to reset state (e.g. /lab/reset). Required for sequences.",
+    )
+    parser.add_argument(
+        "--identity-endpoint",
+        action="append",
+        default=[],
+        help="Endpoint to fetch identity info (default: /me, /users/me).",
+    )
     parser.set_defaults(func=run)
 
 
@@ -150,6 +162,13 @@ def _build_config(args: argparse.Namespace) -> MantisConfig:
         kwargs["privileged_operations"] = tuple(args.privileged_operations)
     if args.allowed_transition:
         kwargs["allowed_transitions"] = tuple(args.allowed_transition)
+    
+    # NUEVOS PARÁMETROS MK-008.1
+    if args.reset_endpoint:
+        kwargs["reset_endpoint"] = args.reset_endpoint
+    if args.identity_endpoint:
+        kwargs["identity_endpoints"] = tuple(args.identity_endpoint)
+        
     return MantisConfig(**kwargs)
 
 
@@ -264,6 +283,8 @@ def _save_baseline(
             "allowed_transitions": list(args.allowed_transition),
             "max_requests": args.max_requests,
             "base_url": args.base_url,
+            "reset_endpoint": args.reset_endpoint,
+            "identity_endpoints": list(args.identity_endpoint),
         },
         "identities": [{"name": i.name} for i in identities],
         "expected_findings": [

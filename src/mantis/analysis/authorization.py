@@ -116,7 +116,7 @@ def _resolve_scope(
     Returns a dict of {field: value} for any ownership_fields present
     in the response. None if /me cannot be resolved.
     """
-    for path in IDENTITY_ENDPOINTS:
+    for path in config.identity_endpoints:
         url = identity.base_url.rstrip("/") + path
         try:
             response = client.get(url, headers=identity.headers())
@@ -177,8 +177,8 @@ def _list_resource_ids(
         return []
     ids: list[str] = []
     for item in data:
-        if isinstance(item, dict) and "id" in item:
-            ids.append(str(item["id"]))
+        if isinstance(item, dict) and config.resource_id_field in item:
+            ids.append(str(item[config.resource_id_field]))
     return ids
 
 

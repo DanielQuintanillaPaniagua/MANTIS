@@ -61,6 +61,8 @@ def _scan_and_save_baseline(tmp_path: Path) -> Path:
             "--allowed-transition", "status:draft->submitted",
             "--allowed-transition", "status:submitted->approved",
             "--max-requests", "200",
+            "--reset-endpoint", "/lab/reset",
+            "--identity-endpoint", "/me",
             "--save-baseline", str(baseline),
             "--no-log",
         ],

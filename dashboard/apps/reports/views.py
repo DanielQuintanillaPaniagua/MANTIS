@@ -6,6 +6,9 @@ from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, render
 
 from .models import ReportRecord
+from django.contrib.auth.decorators import login_required
+@login_required
+
 
 
 def report_list(request):

@@ -50,6 +50,8 @@ def _bfla_config() -> MantisConfig:
         max_requests=200,
         requests_per_minute=200,
         privileged_operations=("approve",),
+        reset_endpoint="/lab/reset",
+        identity_endpoints=("/me",),
     )
 
 

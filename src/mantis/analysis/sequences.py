@@ -42,7 +42,6 @@ STATE_CHANGING_METHODS = {
     HttpMethod.DELETE,
 }
 
-RESET_PATH = "/lab/reset"
 MAX_PROBES_PER_OPERATION = 3
 
 
@@ -58,11 +57,8 @@ def detect_bfla(
     Requires /lab/reset in the spec to reset between probes.
     Without reset, returns () and warns.
     """
-    reset_available = any(
-        op.method is HttpMethod.POST and op.path == RESET_PATH
-        for op in spec.operations
-    )
-    if not reset_available:
+    # Si no hay reset_endpoint configurado, no podemos hacer BFLA de forma segura
+    if not config.reset_endpoint:
         return ()
 
     findings: list[Finding] = []
@@ -86,7 +82,7 @@ def detect_bfla(
         if parent_path is None:
             continue
 
-        b_resources = _list_resource_ids(client, identity_b, parent_path)
+        b_resources = _list_resource_ids(client, identity_b, parent_path, config)
         if not b_resources:
             continue
 
@@ -122,7 +118,7 @@ def _parent_path(path: str) -> str | None:
 
 
 def _list_resource_ids(
-    client: MantisClient, identity: Identity, parent_path: str
+    client: MantisClient, identity: Identity, parent_path: str, config: MantisConfig
 ) -> list[str]:
     url = identity.base_url.rstrip("/") + parent_path
     try:
@@ -139,13 +135,15 @@ def _list_resource_ids(
         return []
     ids: list[str] = []
     for item in data:
-        if isinstance(item, dict) and "id" in item:
-            ids.append(str(item["id"]))
+        if isinstance(item, dict) and config.resource_id_field in item:
+            ids.append(str(item[config.resource_id_field]))
     return ids
 
 
-def _reset_lab(client: MantisClient, identity_a: Identity) -> bool:
-    url = identity_a.base_url.rstrip("/") + RESET_PATH
+def _reset_lab(client: MantisClient, identity_a: Identity, config: MantisConfig) -> bool:
+    if not config.reset_endpoint:
+        return False
+    url = identity_a.base_url.rstrip("/") + config.reset_endpoint
     try:
         response = client.post(url, headers=identity_a.headers())
     except httpx.HTTPError:
@@ -240,7 +238,7 @@ def _probe_bfla(
         return None
 
     # Probe with A
-    if not _reset_lab(client, identity_a):
+    if not _reset_lab(client, identity_a, config):
         return None
     state_a_before = _get_state(
         client, identity_a, read_op.path, path_param, resource_id, config
@@ -258,7 +256,7 @@ def _probe_bfla(
         return None  # No effect with A, cannot compare
 
     # Probe with B
-    if not _reset_lab(client, identity_a):
+    if not _reset_lab(client, identity_a, config):
         return None
     state_b_before = _get_state(
         client, identity_b, read_op.path, path_param, resource_id, config
@@ -336,6 +334,8 @@ def _describe_transition(before: dict[str, str], after: dict[str, str]) -> str:
         if key in after and before[key] != after[key]:
             parts.append(f"{key}: {before[key]} -> {after[key]}")
     return ", ".join(parts) or "(no change)"
+
+
 def _derive_read_path(operation_path: str, path_param: str) -> str | None:
     """Derive the read path from a state-changing path.
 
@@ -349,12 +349,16 @@ def _derive_read_path(operation_path: str, path_param: str) -> str | None:
     # Cut everything after the path param
     idx = operation_path.index(marker) + len(marker)
     return operation_path[:idx]
+
+
 def _is_privileged(path: str, privileged_operations: tuple[str, ...]) -> bool:
     """Return True if the path contains any of the privileged operation markers.
 
     Example: path="/invoices/{invoice_id}/approve", markers=("approve",) -> True
     """
     return any(marker in path for marker in privileged_operations)
+
+
 def detect_state_skip(
     spec: ApiSpec,
     client: MantisClient,
@@ -374,11 +378,8 @@ def detect_state_skip(
 
     Requires /lab/reset in the spec. Returns () otherwise.
     """
-    reset_available = any(
-        op.method is HttpMethod.POST and op.path == RESET_PATH
-        for op in spec.operations
-    )
-    if not reset_available:
+    # Si no hay reset_endpoint configurado, no podemos hacer State Skip de forma segura
+    if not config.reset_endpoint:
         return ()
 
     # Find candidate state-changing operations with a path param
@@ -416,7 +417,7 @@ def detect_state_skip(
     if use_declared:
         # Find which operations produce an allowed transition
         for op, path_param, read_op in state_ops:
-            if not _reset_lab(client, identity_a):
+            if not _reset_lab(client, identity_a, config):
                 continue
             draft_id = _find_draft_resource(
                 client, identity_a, read_op.path, path_param, config
@@ -444,7 +445,7 @@ def detect_state_skip(
     else:
         # Fallback: heuristic by spec order
         for op, path_param, read_op in state_ops:
-            if not _reset_lab(client, identity_a):
+            if not _reset_lab(client, identity_a, config):
                 continue
             draft_id = _find_draft_resource(
                 client, identity_a, read_op.path, path_param, config
@@ -476,7 +477,7 @@ def detect_state_skip(
         if op.path in natural_op_paths:
             continue
 
-        if not _reset_lab(client, identity_a):
+        if not _reset_lab(client, identity_a, config):
             continue
         draft_id = _find_draft_resource(
             client, identity_a, read_op.path, path_param, config
@@ -553,7 +554,7 @@ def _find_draft_resource(
 ) -> str | None:
     """Find a resource in the first state_field value 'draft' (or first state found)."""
     parent_path = read_path.split("/{", 1)[0]
-    ids = _list_resource_ids(client, identity, parent_path)
+    ids = _list_resource_ids(client, identity, parent_path, config)
     for resource_id in ids:
         state = _get_state(client, identity, read_path, path_param, resource_id, config)
         if state is None:
@@ -570,6 +571,8 @@ def _primary_state(state: dict[str, str]) -> str:
     for value in state.values():
         return value
     return "(unknown)"
+
+
 def _parse_transitions(
     raw: tuple[str, ...],
 ) -> dict[str, dict[str, list[str]]]:

@@ -57,6 +57,8 @@ def _base_args() -> list[str]:
         "--json",
         "--no-log",
         "--max-requests", "300",
+        "--reset-endpoint", "/lab/reset",
+        "--identity-endpoint", "/me",
     ]
 
 
