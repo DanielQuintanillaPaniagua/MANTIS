@@ -382,3 +382,40 @@ def test_state_skip_with_allowed_transitions_ignores_order():
     assert len(findings) == 1
     assert findings[0].type.value == "STATE_SKIP"
     assert "/approve" in findings[0].operation_path
+# --- Safety: no reset endpoint ---
+
+def test_bfla_skipped_without_reset_endpoint():
+    """If reset_endpoint is not configured, detect_bfla returns () for safety."""
+    
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[])
+
+    config = MantisConfig(
+        max_requests=200,
+        requests_per_minute=200,
+        privileged_operations=("approve",),
+        reset_endpoint=None,  # <--- SIN RESET EXPLÍCITO
+    )
+    
+    with _client(handler, config) as client:
+        findings = detect_bfla(_spec(), client, config, ADMIN, EMPLOYEE)
+        
+    assert findings == ()
+
+
+def test_state_skip_skipped_without_reset_endpoint():
+    """If reset_endpoint is not configured, detect_state_skip returns () for safety."""
+    
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[])
+
+    config = MantisConfig(
+        max_requests=200,
+        requests_per_minute=200,
+        reset_endpoint=None,  # <--- SIN RESET EXPLÍCITO
+    )
+    
+    with _client(handler, config) as client:
+        findings = detect_state_skip(_spec_with_state_ops(), client, config, ADMIN)
+        
+    assert findings == ()
