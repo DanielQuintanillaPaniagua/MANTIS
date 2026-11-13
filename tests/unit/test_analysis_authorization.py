@@ -88,8 +88,9 @@ def test_detects_bola_when_employee_reads_other_branch():
 
     config = MantisConfig()
     with _make_client(handler) as client:
+        # AHORA PASAMOS UNA LISTA
         findings = detect_bola(
-            _spec_with_invoice_op(), client, config, ADMIN, EMPLOYEE
+            _spec_with_invoice_op(), client, config, [ADMIN, EMPLOYEE]
         )
 
     assert len(findings) == 2  # invoices 3 and 4
@@ -130,7 +131,7 @@ def test_no_finding_when_all_access_correct():
     config = MantisConfig()
     with _make_client(handler) as client:
         findings = detect_bola(
-            _spec_with_invoice_op(), client, config, ADMIN, EMPLOYEE
+            _spec_with_invoice_op(), client, config, [ADMIN, EMPLOYEE]
         )
 
     assert findings == ()
@@ -145,7 +146,7 @@ def test_no_finding_if_no_me_endpoint():
     config = MantisConfig()
     with _make_client(handler) as client:
         findings = detect_bola(
-            _spec_with_invoice_op(), client, config, ADMIN, EMPLOYEE
+            _spec_with_invoice_op(), client, config, [ADMIN, EMPLOYEE]
         )
 
     assert findings == ()
@@ -171,7 +172,7 @@ def test_no_finding_if_admin_cannot_read_either():
     config = MantisConfig()
     with _make_client(handler) as client:
         findings = detect_bola(
-            _spec_with_invoice_op(), client, config, ADMIN, EMPLOYEE
+            _spec_with_invoice_op(), client, config, [ADMIN, EMPLOYEE]
         )
 
     assert findings == ()

@@ -9,6 +9,7 @@ class MantisConfig:
     timeout_seconds: float = 5.0
     max_requests: int = 20
     requests_per_minute: int = 20
+
     redacted_headers: tuple[str, ...] = (
         "authorization",
         "x-api-key",
@@ -24,10 +25,12 @@ class MantisConfig:
         "secret",
         "password",
     )
+
     allowed_schemes: tuple[str, ...] = ("http", "https")
     allowed_hosts: tuple[str, ...] = ("127.0.0.1", "localhost", "::1")
     allowed_ports: tuple[int, ...] = (8000,)
-    max_spec_size_bytes: int = 10_000_000
+    max_spec_size_bytes: int = 10_000_000  # <--- ASEGÚRATE DE QUE ESTA LÍNEA EXISTE
+
     ownership_fields: tuple[str, ...] = (
         "branch_id",
         "tenant_id",
@@ -42,11 +45,11 @@ class MantisConfig:
     )
     privileged_operations: tuple[str, ...] = ()
     allowed_transitions: tuple[str, ...] = ()
-        # Configuración de endpoints y campos
+
+    # Campos de MK-008.1 / MK-009
+    max_identities: int = 5
     identity_endpoints: tuple[str, ...] = ("/me", "/users/me", "/profile")
     resource_id_field: str = "id"
-    
-    # Configuración de reset (opcional)
     reset_endpoint: str | None = None
 
 
@@ -69,5 +72,7 @@ class MantisConfig:
             raise ValueError("state_fields must not be empty")
         if not self.resource_id_field:
             raise ValueError("resource_id_field must not be empty")
+        if self.max_identities < 1:
+            raise ValueError("max_identities must be at least 1")
         # privileged_operations can be empty; no validation needed.
         # It is a user-provided list of path substrings.

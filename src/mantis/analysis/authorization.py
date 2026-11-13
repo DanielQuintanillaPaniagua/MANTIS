@@ -1,13 +1,13 @@
 """BOLA detection (Broken Object Level Authorization).
 
 Strategy:
-1. Identify each identity's "scope" by calling /me (or /users/me, /profile).
+1. Identify each identity's "scope" by calling /me (or alternatives).
 2. Find GET operations with a path parameter (e.g. GET /invoices/{id}).
 3. For each such operation:
-   a. List resources with identity A (admin) to get IDs.
-   b. For each ID, compare responses of A and B.
-   c. If B gets 200 AND the resource has an ownership field that
-      does not match B's scope, report a BOLA finding.
+   a. List resources with a privileged identity (or the first one).
+   b. For each ID, compare the response for EACH identity.
+   c. If an identity gets 200 AND the resource has an ownership field
+      that does not match that identity's scope, report BOLA.
 
 This module does NOT know V1 exists. It follows the generic rule:
 "an identity accessing a resource it does not own is suspicious".
@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from mantis.analysis.models import(
+from mantis.analysis.models import (
     Confidence,
     Evidence,
     Finding,
@@ -27,10 +27,10 @@ from mantis.analysis.models import(
     Severity,
 )
 from mantis.core.config import MantisConfig
-from mantis.spec.models import ApiSpec, HttpMethod,Operation
+from mantis.spec.models import ApiSpec, HttpMethod, Operation
 from mantis.transport.client import MantisClient
 
-IDENTITY_ENDPOINTS = ("/me", "/users/me", "/profile")
+
 MAX_LISTED_RESOURCES = 20
 FALLBACK_ID_RANGE = range(1, 11)
 
@@ -51,25 +51,27 @@ def detect_bola(
     spec: ApiSpec,
     client: MantisClient,
     config: MantisConfig,
-    identity_a: Identity,
-    identity_b: Identity,
+    identities: list[Identity],
 ) -> tuple[Finding, ...]:
-    """Detect BOLA between two identities.
+    """Detect BOLA across a matrix of identities.
 
-    Identity A is the "privileged" identity (admin).
-    Identity B is the "limited" identity (employee).
-
-    Returns findings. Empty tuple means "nothing detected".
+    Requires at least one identity. The first identity is used to list
+    resources. The rest are tested against those resources.
     """
-    scope_a = _resolve_scope(client, identity_a, config)
-    scope_b = _resolve_scope(client, identity_b, config)
-
-    if scope_b is None:
-        # Without B's scope we cannot determine ownership.
+    if not identities:
         return ()
 
+    # Resolve scopes for all identities
+    scopes: dict[str, dict[str, str] | None] = {}
+    for identity in identities:
+        scopes[identity.name] = _resolve_scope(client, identity, config)
+
+    # The first identity is used as the "lister"
+    lister = identities[0]
+    lister_scope = scopes[lister.name]
+    
     findings: list[Finding] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str]] = set()  # (path, resource_id, identity_name)
 
     for op in spec.operations:
         if op.method is not HttpMethod.GET:
@@ -82,28 +84,38 @@ def detect_bola(
         if parent_path is None:
             continue
 
-        resource_ids = _list_resource_ids(client, identity_a, parent_path, config)
+        resource_ids = _list_resource_ids(client, lister, parent_path, config)
         if not resource_ids:
             resource_ids = [str(i) for i in FALLBACK_ID_RANGE]
 
         for resource_id in resource_ids[:MAX_LISTED_RESOURCES]:
-            key = (op.path, resource_id)
-            if key in seen:
-                continue
-            seen.add(key)
+            for identity in identities:
+                # Don't test the lister against itself (we assume it has access)
+                if identity.name == lister.name:
+                    continue
 
-            finding = _probe_resource(
-                client=client,
-                operation=op,
-                path_param=path_param,
-                resource_id=resource_id,
-                identity_a=identity_a,
-                identity_b=identity_b,
-                scope_b=scope_b,
-                config=config,
-            )
-            if finding is not None:
-                findings.append(finding)
+                scope = scopes[identity.name]
+                if scope is None:
+                    continue  # Cannot determine identity's scope, skip
+
+                key = (op.path, resource_id, identity.name)
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                finding = _probe_resource(
+                    client=client,
+                    operation=op,
+                    path_param=path_param,
+                    resource_id=resource_id,
+                    identity=lister,
+                    identity_scope=lister_scope,
+                    test_identity=identity,
+                    test_scope=scope,
+                    config=config,
+                )
+                if finding is not None:
+                    findings.append(finding)
 
     return tuple(findings)
 
@@ -111,11 +123,7 @@ def detect_bola(
 def _resolve_scope(
     client: MantisClient, identity: Identity, config: MantisConfig
 ) -> dict[str, str] | None:
-    """Call /me (or alternatives) and extract ownership fields.
-
-    Returns a dict of {field: value} for any ownership_fields present
-    in the response. None if /me cannot be resolved.
-    """
+    """Call identity endpoints and extract ownership fields."""
     for path in config.identity_endpoints:
         url = identity.base_url.rstrip("/") + path
         try:
@@ -148,7 +156,6 @@ def _first_path_param(op: Operation) -> str | None:
 
 
 def _parent_path(path: str) -> str | None:
-    """Derive the listing path: /invoices/{id} -> /invoices."""
     if "{" not in path:
         return None
     parent = path.split("/{", 1)[0]
@@ -188,43 +195,44 @@ def _probe_resource(
     operation: Operation,
     path_param: str,
     resource_id: str,
-    identity_a: Identity,
-    identity_b: Identity,
-    scope_b: dict[str, str],
+    identity: Identity,
+    identity_scope: dict[str, str] | None,
+    test_identity: Identity,
+    test_scope: dict[str, str],
     config: MantisConfig,
 ) -> Finding | None:
-    """Probe one resource with both identities. Return a finding if BOLA detected."""
-    url_a = _build_url(identity_a.base_url, operation.path, path_param, resource_id)
-    url_b = _build_url(identity_b.base_url, operation.path, path_param, resource_id)
+    """Probe one resource with the lister and a test identity."""
+    url_lister = _build_url(identity.base_url, operation.path, path_param, resource_id)
+    url_test = _build_url(test_identity.base_url, operation.path, path_param, resource_id)
 
     try:
-        response_a = client.get(url_a, headers=identity_a.headers())
+        response_lister = client.get(url_lister, headers=identity.headers())
     except httpx.HTTPError:
         return None
 
-    if response_a.status_code != 200:
+    if response_lister.status_code != 200:
         return None
 
     try:
-        response_b = client.get(url_b, headers=identity_b.headers())
+        response_test = client.get(url_test, headers=test_identity.headers())
     except httpx.HTTPError:
         return None
 
-    if response_b.status_code != 200:
+    if response_test.status_code != 200:
         return None
 
     try:
-        body_b = response_b.json()
+        body_test = response_test.json()
     except ValueError:
         return None
 
-    if not isinstance(body_b, dict):
+    if not isinstance(body_test, dict):
         return None
 
     mismatches = []
-    for field, scope_value in scope_b.items():
-        if field in body_b and body_b[field] is not None:
-            resource_value = str(body_b[field])
+    for field, scope_value in test_scope.items():
+        if field in body_test and body_test[field] is not None:
+            resource_value = str(body_test[field])
             if resource_value != scope_value:
                 mismatches.append((field, scope_value, resource_value))
 
@@ -233,18 +241,18 @@ def _probe_resource(
 
     evidence = (
         Evidence(
-            description=f"{identity_a.name} reads resource {resource_id}",
+            description=f"{identity.name} reads resource {resource_id}",
             method="GET",
-            url=url_a,
-            status=response_a.status_code,
-            response_size=len(response_a.content),
+            url=url_lister,
+            status=response_lister.status_code,
+            response_size=len(response_lister.content),
         ),
         Evidence(
-            description=f"{identity_b.name} reads resource {resource_id}",
+            description=f"{test_identity.name} reads resource {resource_id}",
             method="GET",
-            url=url_b,
-            status=response_b.status_code,
-            response_size=len(response_b.content),
+            url=url_test,
+            status=response_test.status_code,
+            response_size=len(response_test.content),
         ),
     )
 
@@ -254,29 +262,29 @@ def _probe_resource(
     )
 
     return Finding(
-        id=f"BOLA-{operation.path.replace('/', '_')}-{resource_id}",
+        id=f"BOLA-{operation.path.replace('/', '_')}-{resource_id}-{test_identity.name}",
         type=FindingType.BOLA,
         severity=Severity.HIGH,
         confidence=Confidence.HIGH,
         operation_method=operation.method.value,
         operation_path=operation.path,
-        identity=identity_b.name,
+        identity=test_identity.name,
         summary=(
-            f"{identity_b.name} can access resource {resource_id} "
+            f"{test_identity.name} can access resource {resource_id} "
             f"outside its scope ({mismatch_desc})"
         ),
         details=(
-            f"Identity '{identity_b.name}' (scope: {scope_b}) accessed "
+            f"Identity '{test_identity.name}' (scope: {test_scope}) accessed "
             f"resource '{resource_id}' via {operation.method.value} {operation.path}. "
             f"The resource's ownership fields do not match: {mismatch_desc}. "
             f"Expected 403, got 200."
         ),
         evidence=evidence,
         reproduction=(
-            f"1. Use identity '{identity_b.name}' (API key: {identity_b.api_key[:8]}...)",
-            f"2. GET {url_b}",
-            f"3. Expected 403 (resource outside scope), got {response_b.status_code}",
-            f"4. Compare with identity '{identity_a.name}' on same URL: {response_a.status_code}",
+            f"1. Use identity '{test_identity.name}' (API key: {test_identity.api_key[:8]}...)",
+            f"2. GET {url_test}",
+            f"3. Expected 403 (resource outside scope), got {response_test.status_code}",
+            f"4. Compare with identity '{identity.name}' on same URL: {response_lister.status_code}",
         ),
     )
 

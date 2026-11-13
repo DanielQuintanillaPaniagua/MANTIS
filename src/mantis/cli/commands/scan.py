@@ -54,7 +54,6 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         metavar="NAME:KEY",
         help=(
             "Identity to test. Repeatable. "
-            "First identity is privileged (A), second is limited (B). "
             "Example: --identity admin:lab-admin-key --identity employee:lab-employee-key"
         ),
     )
@@ -73,21 +72,14 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         action="append",
         default=[],
         metavar="SUBSTRING",
-        help=(
-            "Path substring for operations that only privileged identities "
-            "should execute (e.g. 'approve'). Required for BFLA detection. "
-            "Repeatable."
-        ),
+        help="Path substring for operations that only privileged identities should execute.",
     )
     parser.add_argument(
         "--allowed-transition",
         action="append",
         default=[],
         metavar="FIELD:FROM->TO",
-        help=(
-            "Declare an allowed state transition (e.g. 'status:draft->submitted'). "
-            "Repeatable."
-        ),
+        help="Declare an allowed state transition.",
     )
     parser.add_argument(
         "--format",
@@ -162,13 +154,10 @@ def _build_config(args: argparse.Namespace) -> MantisConfig:
         kwargs["privileged_operations"] = tuple(args.privileged_operations)
     if args.allowed_transition:
         kwargs["allowed_transitions"] = tuple(args.allowed_transition)
-    
-    # NUEVOS PARÁMETROS MK-008.1
     if args.reset_endpoint:
         kwargs["reset_endpoint"] = args.reset_endpoint
     if args.identity_endpoint:
         kwargs["identity_endpoints"] = tuple(args.identity_endpoint)
-        
     return MantisConfig(**kwargs)
 
 
@@ -180,16 +169,18 @@ def run(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
-    if len(identities) < 2:
-        print("error: at least two --identity arguments are required", file=sys.stderr)
+    if not identities:
+        print("error: at least one --identity argument is required", file=sys.stderr)
         return 2
-
-    identity_a, identity_b = identities[0], identities[1]
 
     try:
         config = _build_config(args)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    if len(identities) > config.max_identities:
+        print(f"error: too many identities (max: {config.max_identities})", file=sys.stderr)
         return 2
 
     try:
@@ -212,14 +203,16 @@ def run(args: argparse.Namespace) -> int:
     try:
         with MantisClient(config, log_writer=log_writer) as client:
             all_findings.extend(
-                detect_bola(spec, client, config, identity_a, identity_b)
+                detect_bola(spec, client, config, identities)
             )
             if args.sequences:
+                # TODO MK-009: Refactor detect_bfla to accept list of identities
+                if len(identities) >= 2:
+                    all_findings.extend(
+                        detect_bfla(spec, client, config, identities[0], identities[1])
+                    )
                 all_findings.extend(
-                    detect_bfla(spec, client, config, identity_a, identity_b)
-                )
-                all_findings.extend(
-                    detect_state_skip(spec, client, config, identity_a)
+                    detect_state_skip(spec, client, config, identities[0])
                 )
     except EvidenceWriteError as exc:
         print(f"error: request executed but evidence not saved: {exc}", file=sys.stderr)
@@ -240,7 +233,6 @@ def run(args: argparse.Namespace) -> int:
 
     findings = tuple(all_findings)
 
-    # Save baseline if requested
     if args.save_baseline is not None:
         _save_baseline(
             path=args.save_baseline,
@@ -251,7 +243,6 @@ def run(args: argparse.Namespace) -> int:
             findings=findings,
         )
 
-    # Determine format (--json is a deprecated alias for --format json)
     output_format = "json" if args.json else args.format
 
     if output_format == "json":
@@ -259,7 +250,7 @@ def run(args: argparse.Namespace) -> int:
     elif output_format == "markdown":
         print(format_findings_markdown(findings, spec_title=spec.title))
     else:
-        _print_human(findings, identity_a, identity_b, args.sequences)
+        _print_human(findings, identities, args.sequences)
 
     return 1 if findings else 0
 
@@ -273,7 +264,6 @@ def _save_baseline(
     identities: list[Identity],
     findings: tuple,
 ) -> None:
-    """Write the expected findings to a baseline JSON file for regression."""
     payload = {
         "spec": str(spec_path),
         "spec_title": spec_title,
@@ -299,11 +289,12 @@ def _save_baseline(
     print(f"Baseline saved to {path}", file=sys.stderr)
 
 
-def _print_human(findings, identity_a: Identity, identity_b: Identity, sequences: bool) -> None:
+def _print_human(findings, identities: list[Identity], sequences: bool) -> None:
     print("MANTIS :: SCAN")
     print()
-    print(f"Identity A: {identity_a.name}")
-    print(f"Identity B: {identity_b.name}")
+    print("Identities:")
+    for i in identities:
+        print(f"  - {i.name}")
     if sequences:
         print("Mode: BOLA + BFLA + state skip")
     else:
