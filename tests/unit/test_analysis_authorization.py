@@ -8,7 +8,7 @@ import json
 import httpx
 import pytest
 
-from mantis.analysis.authorization import Identity, detect_bola
+from mantis.analysis.authorization import Identity, detect_bola, detect_bola_write
 from mantis.core.config import MantisConfig
 from mantis.spec.models import (
     ApiSpec,
@@ -172,6 +172,19 @@ def test_no_finding_if_admin_cannot_read_either():
     config = MantisConfig()
     with _make_client(handler) as client:
         findings = detect_bola(
+            _spec_with_invoice_op(), client, config, [ADMIN, EMPLOYEE]
+        )
+
+    assert findings == ()
+def test_bola_write_omitted_without_reset():
+    """Without reset_endpoint, write operations are skipped for safety."""
+    
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200)
+
+    config = MantisConfig(reset_endpoint=None)
+    with _make_client(handler) as client:
+        findings = detect_bola_write(
             _spec_with_invoice_op(), client, config, [ADMIN, EMPLOYEE]
         )
 

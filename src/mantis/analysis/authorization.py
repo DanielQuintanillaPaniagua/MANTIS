@@ -291,3 +291,135 @@ def _probe_resource(
 
 def _build_url(base_url: str, path: str, param: str, value: str) -> str:
     return base_url.rstrip("/") + path.replace("{" + param + "}", value)
+def _verify_state(
+    client: MantisClient,
+    identity: Identity,
+    read_path: str,
+    path_param: str,
+    resource_id: str,
+    expected_state: dict[str, str],
+    config: MantisConfig,
+) -> bool:
+    """Verifica que el estado del recurso vuelve a ser el esperado."""
+    url = identity.base_url.rstrip("/") + read_path.replace("{" + path_param + "}", resource_id)
+    try:
+        response = client.get(url, headers=identity.headers())
+    except httpx.HTTPError:
+        return False
+    
+    if response.status_code != 200:
+        return False
+
+    try:
+        data = response.json()
+    except ValueError:
+        return False
+    
+    for field, expected_value in expected_state.items():
+        if field in data and str(data[field]) != expected_value:
+            return False
+            
+    return True
+def detect_bola_write(
+    spec: ApiSpec,
+    client: MantisClient,
+    config: MantisConfig,
+    identities: list[Identity],
+) -> tuple[Finding, ...]:
+    """Detect BOLA in write operations (PUT, PATCH, DELETE).
+    
+    REQUIRES a verified reset mechanism to be safe.
+    """
+    if not identities or not config.reset_endpoint:
+        return ()  # Seguridad: no hacemos escrituras sin reset
+
+    lister = identities[0]
+    findings: list[Finding] = []
+
+    for op in spec.operations:
+        if op.method not in (HttpMethod.PUT, HttpMethod.PATCH, HttpMethod.DELETE):
+            continue
+        path_param = _first_path_param(op)
+        if path_param is None:
+            continue
+
+        parent_path = _parent_path(op.path)
+        if parent_path is None:
+            continue
+
+        # Asumimos que existe un GET en la misma ruta para leer el estado
+        read_path = _derive_read_path(op.path, path_param)
+        if read_path is None:
+            continue
+
+        # Listar recursos
+        resource_ids = _list_resource_ids(client, lister, parent_path, config)
+        if not resource_ids:
+            continue
+
+        for resource_id in resource_ids[:3]:  # Límite estricto para escrituras
+            # 1. Resetear a estado conocido
+            if not _reset_lab(client, lister, config):
+                return findings  # Si el reset falla, abortamos la escritura
+
+            # 2. Guardar estado inicial
+            url_read = lister.base_url.rstrip("/") + read_path.replace("{" + path_param + "}", resource_id)
+            try:
+                resp_init = client.get(url_read, headers=lister.headers())
+                initial_state = resp_init.json()
+            except Exception:
+                continue
+
+            # 3. Probar con cada identidad (excepto el lister)
+            for identity in identities[1:]:
+                url_write = identity.base_url.rstrip("/") + op.path.replace("{" + path_param + "}", resource_id)
+                
+                # Cuerpo vacío o genérico para PUT/PATCH
+                payload = {"status": "hacked_by_mantis"} if op.method in (HttpMethod.PUT, HttpMethod.PATCH) else None
+
+                try:
+                    resp_write = client.request(
+                        op.method.value, 
+                        url_write, 
+                        headers=identity.headers(),
+                        json=payload
+                    )
+                except httpx.HTTPError:
+                    continue
+
+                if resp_write.status_code in (200, 201, 204):
+                    # ¡Vulnerabilidad! La identidad pudo escribir.
+                    # 4. Restaurar (Reset)
+                    _reset_lab(client, lister, config)
+                    
+                    # 5. Verificar que se restauró
+                    if not _verify_state(client, lister, read_path, path_param, resource_id, initial_state, config):
+                        # Si no se pudo restaurar, es un problema grave, pero ya detectamos la vulnerabilidad.
+                        pass
+
+                    findings.append(
+                        Finding(
+                            id=f"BOLA-{op.method.value}-{op.path.replace('/', '_')}-{resource_id}-{identity.name}",
+                            type=FindingType.BOLA,
+                            severity=Severity.CRITICAL if op.method is HttpMethod.DELETE else Severity.HIGH,
+                            confidence=Confidence.HIGH,
+                            operation_method=op.method.value,
+                            operation_path=op.path,
+                            identity=identity.name,
+                            summary=f"{identity.name} could {op.method.value} resource {resource_id}",
+                            details=f"Identity '{identity.name}' executed {op.method.value} {op.path} on resource {resource_id} and received {resp_write.status_code}.",
+                            evidence=(
+                                Evidence(description="Read initial state", method="GET", url=url_read, status=200),
+                                Evidence(description=f"Unauthorized {op.method.value}", method=op.method.value, url=url_write, status=resp_write.status_code),
+                            ),
+                            reproduction=(
+                                f"1. Reset lab",
+                                f"2. As {identity.name}, execute {op.method.value} {url_write}",
+                                f"3. Expected 403, got {resp_write.status_code}"
+                            )
+                        )
+                    )
+                    # Salir del bucle de identidades para este recurso tras encontrar un fallo
+                    break 
+
+    return tuple(findings)

@@ -90,6 +90,8 @@ class MantisClient:
         method: str,
         url: str,
         headers: dict[str, str] | None = None,
+        content: bytes | str | None = None,
+        json: dict | None = None,
     ) -> httpx.Response:
         """Send a single request, enforcing limits and logging evidence.
 
@@ -108,7 +110,9 @@ class MantisClient:
         response_headers: dict[str, str] = {}
 
         try:
-            response = self._client.request(method, url, headers=headers)
+            response = self._client.request(
+                method, url, headers=headers, content=content, json=json
+            )
             duration_ms = (time.perf_counter() - started) * 1000.0
             self.last_duration_ms = duration_ms      
             status = response.status_code

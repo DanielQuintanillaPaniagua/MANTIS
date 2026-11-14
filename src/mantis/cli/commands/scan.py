@@ -24,7 +24,7 @@ from pathlib import Path
 
 import httpx
 
-from mantis.analysis.authorization import Identity, detect_bola
+from mantis.analysis.authorization import Identity, detect_bola, detect_bola_write
 from mantis.analysis.sequences import detect_bfla, detect_state_skip
 from mantis.cli.commands.ping import DEFAULT_LOG_PATH
 from mantis.core.config import MantisConfig
@@ -204,6 +204,9 @@ def run(args: argparse.Namespace) -> int:
         with MantisClient(config, log_writer=log_writer) as client:
             all_findings.extend(
                 detect_bola(spec, client, config, identities)
+            )
+            all_findings.extend(
+                detect_bola_write(spec, client, config, identities)
             )
             if args.sequences:
                 # TODO MK-009: Refactor detect_bfla to accept list of identities
