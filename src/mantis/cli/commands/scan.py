@@ -198,25 +198,28 @@ def run(args: argparse.Namespace) -> int:
             print(f"error: cannot open log file {args.log}: {exc}", file=sys.stderr)
             return 4
 
-    all_findings: list = []
+        all_findings: list = []
+    assessment_states: dict[str, str] = {}
 
     try:
         with MantisClient(config, log_writer=log_writer) as client:
-            all_findings.extend(
-                detect_bola(spec, client, config, identities)
-            )
-            all_findings.extend(
-                detect_bola_write(spec, client, config, identities)
-            )
+            res_bola = detect_bola(spec, client, config, identities)
+            assessment_states["BOLA_GET"] = res_bola.state.value
+            all_findings.extend(res_bola.findings)
+
+            res_bola_write = detect_bola_write(spec, client, config, identities)
+            assessment_states["BOLA_WRITE"] = res_bola_write.state.value
+            all_findings.extend(res_bola_write.findings)
+
             if args.sequences:
-                # TODO MK-009: Refactor detect_bfla to accept list of identities
                 if len(identities) >= 2:
-                    all_findings.extend(
-                        detect_bfla(spec, client, config, identities[0], identities[1])
-                    )
-                all_findings.extend(
-                    detect_state_skip(spec, client, config, identities[0])
-                )
+                    res_bfla = detect_bfla(spec, client, config, identities[0], identities[1])
+                    assessment_states["BFLA"] = res_bfla.state.value
+                    all_findings.extend(res_bfla.findings)
+                
+                res_skip = detect_state_skip(spec, client, config, identities[0])
+                assessment_states["STATE_SKIP"] = res_skip.state.value
+                all_findings.extend(res_skip.findings)
     except EvidenceWriteError as exc:
         print(f"error: request executed but evidence not saved: {exc}", file=sys.stderr)
         return 5
@@ -253,7 +256,7 @@ def run(args: argparse.Namespace) -> int:
     elif output_format == "markdown":
         print(format_findings_markdown(findings, spec_title=spec.title))
     else:
-        _print_human(findings, identities, args.sequences)
+        _print_human(findings, identities, args.sequences, assessment_states)
 
     return 1 if findings else 0
 
@@ -292,7 +295,7 @@ def _save_baseline(
     print(f"Baseline saved to {path}", file=sys.stderr)
 
 
-def _print_human(findings, identities: list[Identity], sequences: bool) -> None:
+def _print_human(findings, identities: list[Identity], sequences: bool, states: dict[str, str] | None = None) -> None:
     print("MANTIS :: SCAN")
     print()
     print("Identities:")
@@ -318,4 +321,10 @@ def _print_human(findings, identities: list[Identity], sequences: bool) -> None:
         print(f"  Reproduction:")
         for step in f.reproduction:
             print(f"    {step}")
+        print()
+    
+        if states:
+        print("Assessment States:")
+        for check, state in states.items():
+            print(f"  - {check:12s}: {state}")
         print()

@@ -21,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import httpx
+from mantis.analysis.result import AssessmentState, ScanResult
 
 from mantis.analysis.authorization import Identity
 from mantis.analysis.models import (
@@ -51,7 +52,7 @@ def detect_bfla(
     config: MantisConfig,
     identity_a: Identity,
     identity_b: Identity,
-) -> tuple[Finding, ...]:
+) -> ScanResult:
     """Detect BFLA between a privileged and a limited identity.
 
     Requires /lab/reset in the spec to reset between probes.
@@ -59,14 +60,14 @@ def detect_bfla(
     """
     # Si no hay reset_endpoint configurado, no podemos hacer BFLA de forma segura
     if not config.reset_endpoint:
-        return ()
+        return ScanResult(state=AssessmentState.OMITTED, reason="No reset_endpoint configured.")
 
     findings: list[Finding] = []
 
     if not config.privileged_operations:
         # Without a declaration of privileged operations, we cannot
         # distinguish legitimate state changes from privileged ones.
-        return ()
+        return ScanResult(state=AssessmentState.OMITTED, reason="No privileged_operations configured.")
 
     for op in spec.operations:
         if op.method not in STATE_CHANGING_METHODS:
@@ -100,8 +101,9 @@ def detect_bfla(
             if finding is not None:
                 findings.append(finding)
 
-    return tuple(findings)
-
+    if findings:
+        return ScanResult(state=AssessmentState.CONFIRMED, findings=tuple(findings))
+    return ScanResult(state=AssessmentState.NOT_FOUND)
 
 def _first_path_param(op: Operation) -> str | None:
     for p in op.parameters:
@@ -364,7 +366,7 @@ def detect_state_skip(
     client: MantisClient,
     config: MantisConfig,
     identity_a: Identity,
-) -> tuple[Finding, ...]:
+) -> ScanResult:
     """Detect state skip vulnerabilities.
 
     Strategy:
@@ -380,7 +382,7 @@ def detect_state_skip(
     """
     # Si no hay reset_endpoint configurado, no podemos hacer State Skip de forma segura
     if not config.reset_endpoint:
-        return ()
+        return ScanResult(state=AssessmentState.OMITTED, reason="No reset_endpoint configured.")
 
     # Find candidate state-changing operations with a path param
     state_ops = []
@@ -402,7 +404,7 @@ def detect_state_skip(
         state_ops.append((op, path_param, read_op))
 
     if len(state_ops) < 2:
-        return ()  # Need at least two to distinguish natural from skip
+        return ScanResult(state=AssessmentState.OMITTED, reason="Not enough state-changing operations found.")  # Need at least two to distinguish natural from skip
 
     # Parse allowed_transitions if configured
     allowed = _parse_transitions(config.allowed_transitions)
@@ -441,7 +443,7 @@ def detect_state_skip(
                 natural_op_paths.add(op.path)
 
         if not natural_op_paths:
-            return ()  # No allowed transition found. Nothing to compare.
+            return ScanResult(state=AssessmentState.INCONCLUSIVE, reason="Could not determine natural transition.")  # No allowed transition found. Nothing to compare.
     else:
         # Fallback: heuristic by spec order
         for op, path_param, read_op in state_ops:
@@ -469,7 +471,7 @@ def detect_state_skip(
             break
 
     if not natural_op_paths:
-        return ()  # Cannot determine natural flow
+        return ScanResult(state=AssessmentState.INCONCLUSIVE, reason="Could not determine natural transition.")  # Cannot determine natural flow
 
     # Phase 2: probe operations that are not part of the natural flow
     findings: list[Finding] = []
@@ -542,8 +544,9 @@ def detect_state_skip(
             )
         )
 
-    return tuple(findings)
-
+    if findings:
+        return ScanResult(state=AssessmentState.CONFIRMED, findings=tuple(findings))
+    return ScanResult(state=AssessmentState.NOT_FOUND)
 
 def _find_draft_resource(
     client: MantisClient,

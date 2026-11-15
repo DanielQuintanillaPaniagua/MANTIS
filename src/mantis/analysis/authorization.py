@@ -26,6 +26,7 @@ from mantis.analysis.models import (
     FindingType,
     Severity,
 )
+from mantis.analysis.result import AssessmentState, ScanResult
 from mantis.core.config import MantisConfig
 from mantis.spec.models import ApiSpec, HttpMethod, Operation
 from mantis.transport.client import MantisClient
@@ -47,19 +48,17 @@ class Identity:
         return {"X-API-Key": self.api_key}
 
 
+# --- BOLA GET ---
+
 def detect_bola(
     spec: ApiSpec,
     client: MantisClient,
     config: MantisConfig,
     identities: list[Identity],
-) -> tuple[Finding, ...]:
-    """Detect BOLA across a matrix of identities.
-
-    Requires at least one identity. The first identity is used to list
-    resources. The rest are tested against those resources.
-    """
+) -> ScanResult:
+    """Detect BOLA across a matrix of identities for GET operations."""
     if not identities:
-        return ()
+        return ScanResult(state=AssessmentState.OMITTED, reason="No identities provided")
 
     # Resolve scopes for all identities
     scopes: dict[str, dict[str, str] | None] = {}
@@ -71,7 +70,7 @@ def detect_bola(
     lister_scope = scopes[lister.name]
     
     findings: list[Finding] = []
-    seen: set[tuple[str, str, str]] = set()  # (path, resource_id, identity_name)
+    seen: set[tuple[str, str, str]] = set()
 
     for op in spec.operations:
         if op.method is not HttpMethod.GET:
@@ -90,13 +89,12 @@ def detect_bola(
 
         for resource_id in resource_ids[:MAX_LISTED_RESOURCES]:
             for identity in identities:
-                # Don't test the lister against itself (we assume it has access)
                 if identity.name == lister.name:
                     continue
 
                 scope = scopes[identity.name]
                 if scope is None:
-                    continue  # Cannot determine identity's scope, skip
+                    continue
 
                 key = (op.path, resource_id, identity.name)
                 if key in seen:
@@ -117,13 +115,122 @@ def detect_bola(
                 if finding is not None:
                     findings.append(finding)
 
-    return tuple(findings)
+    if findings:
+        return ScanResult(state=AssessmentState.CONFIRMED, findings=tuple(findings))
+    
+    if all(scope is None for scope in scopes.values()):
+        return ScanResult(state=AssessmentState.INCONCLUSIVE, reason="Could not resolve scope for any identity")
 
+    return ScanResult(state=AssessmentState.NOT_FOUND)
+
+
+# --- BOLA WRITE ---
+
+def detect_bola_write(
+    spec: ApiSpec,
+    client: MantisClient,
+    config: MantisConfig,
+    identities: list[Identity],
+) -> ScanResult:
+    """Detect BOLA in write operations (PUT, PATCH, DELETE).
+    
+    REQUIRES a verified reset mechanism to be safe.
+    """
+    if not config.reset_endpoint:
+        return ScanResult(
+            state=AssessmentState.OMITTED, 
+            reason="No reset_endpoint configured. Write operations are unsafe."
+        )
+        
+    if not identities:
+        return ScanResult(state=AssessmentState.OMITTED, reason="No identities provided")
+
+    lister = identities[0]
+    findings: list[Finding] = []
+
+    for op in spec.operations:
+        if op.method not in (HttpMethod.PUT, HttpMethod.PATCH, HttpMethod.DELETE):
+            continue
+        path_param = _first_path_param(op)
+        if path_param is None:
+            continue
+
+        parent_path = _parent_path(op.path)
+        if parent_path is None:
+            continue
+
+        read_path = _derive_read_path(op.path, path_param)
+        if read_path is None:
+            continue
+
+        resource_ids = _list_resource_ids(client, lister, parent_path, config)
+        if not resource_ids:
+            continue
+
+        for resource_id in resource_ids[:3]:
+            if not _reset_lab(client, lister, config):
+                return ScanResult(state=AssessmentState.INCONCLUSIVE, findings=tuple(findings), reason="Reset failed during write test")
+
+            url_read = lister.base_url.rstrip("/") + read_path.replace("{" + path_param + "}", resource_id)
+            try:
+                resp_init = client.get(url_read, headers=lister.headers())
+                initial_state = resp_init.json()
+            except Exception:
+                continue
+
+            for identity in identities[1:]:
+                url_write = identity.base_url.rstrip("/") + op.path.replace("{" + path_param + "}", resource_id)
+                
+                payload = {"status": "hacked_by_mantis"} if op.method in (HttpMethod.PUT, HttpMethod.PATCH) else None
+
+                try:
+                    resp_write = client.request(
+                        op.method.value, 
+                        url_write, 
+                        headers=identity.headers(),
+                        json=payload
+                    )
+                except httpx.HTTPError:
+                    continue
+
+                if resp_write.status_code in (200, 201, 204):
+                    _reset_lab(client, lister, config)
+                    _verify_state(client, lister, read_path, path_param, resource_id, initial_state, config)
+
+                    findings.append(
+                        Finding(
+                            id=f"BOLA-{op.method.value}-{op.path.replace('/', '_')}-{resource_id}-{identity.name}",
+                            type=FindingType.BOLA,
+                            severity=Severity.CRITICAL if op.method is HttpMethod.DELETE else Severity.HIGH,
+                            confidence=Confidence.HIGH,
+                            operation_method=op.method.value,
+                            operation_path=op.path,
+                            identity=identity.name,
+                            summary=f"{identity.name} could {op.method.value} resource {resource_id}",
+                            details=f"Identity '{identity.name}' executed {op.method.value} {op.path} on resource {resource_id} and received {resp_write.status_code}.",
+                            evidence=(
+                                Evidence(description="Read initial state", method="GET", url=url_read, status=200),
+                                Evidence(description=f"Unauthorized {op.method.value}", method=op.method.value, url=url_write, status=resp_write.status_code),
+                            ),
+                            reproduction=(
+                                f"1. Reset lab",
+                                f"2. As {identity.name}, execute {op.method.value} {url_write}",
+                                f"3. Expected 403, got {resp_write.status_code}"
+                            )
+                        )
+                    )
+                    break 
+
+    if findings:
+        return ScanResult(state=AssessmentState.CONFIRMED, findings=tuple(findings))
+    return ScanResult(state=AssessmentState.NOT_FOUND)
+
+
+# --- Helpers ---
 
 def _resolve_scope(
     client: MantisClient, identity: Identity, config: MantisConfig
 ) -> dict[str, str] | None:
-    """Call identity endpoints and extract ownership fields."""
     for path in config.identity_endpoints:
         url = identity.base_url.rstrip("/") + path
         try:
@@ -162,13 +269,20 @@ def _parent_path(path: str) -> str | None:
     return parent if parent else None
 
 
+def _derive_read_path(operation_path: str, path_param: str) -> str | None:
+    marker = "{" + path_param + "}"
+    if marker not in operation_path:
+        return None
+    idx = operation_path.index(marker) + len(marker)
+    return operation_path[:idx]
+
+
 def _list_resource_ids(
     client: MantisClient,
     identity: Identity,
     parent_path: str,
     config: MantisConfig,
 ) -> list[str]:
-    """List resources at the parent path and extract IDs."""
     url = identity.base_url.rstrip("/") + parent_path
     try:
         response = client.get(url, headers=identity.headers())
@@ -189,6 +303,47 @@ def _list_resource_ids(
     return ids
 
 
+def _reset_lab(client: MantisClient, identity: Identity, config: MantisConfig) -> bool:
+    if not config.reset_endpoint:
+        return False
+    url = identity.base_url.rstrip("/") + config.reset_endpoint
+    try:
+        response = client.post(url, headers=identity.headers())
+    except httpx.HTTPError:
+        return False
+    return response.status_code in (200, 204)
+
+
+def _verify_state(
+    client: MantisClient,
+    identity: Identity,
+    read_path: str,
+    path_param: str,
+    resource_id: str,
+    expected_state: dict[str, str],
+    config: MantisConfig,
+) -> bool:
+    url = identity.base_url.rstrip("/") + read_path.replace("{" + path_param + "}", resource_id)
+    try:
+        response = client.get(url, headers=identity.headers())
+    except httpx.HTTPError:
+        return False
+    
+    if response.status_code != 200:
+        return False
+
+    try:
+        data = response.json()
+    except ValueError:
+        return False
+    
+    for field, expected_value in expected_state.items():
+        if field in data and str(data[field]) != expected_value:
+            return False
+            
+    return True
+
+
 def _probe_resource(
     *,
     client: MantisClient,
@@ -201,7 +356,6 @@ def _probe_resource(
     test_scope: dict[str, str],
     config: MantisConfig,
 ) -> Finding | None:
-    """Probe one resource with the lister and a test identity."""
     url_lister = _build_url(identity.base_url, operation.path, path_param, resource_id)
     url_test = _build_url(test_identity.base_url, operation.path, path_param, resource_id)
 
@@ -291,135 +445,3 @@ def _probe_resource(
 
 def _build_url(base_url: str, path: str, param: str, value: str) -> str:
     return base_url.rstrip("/") + path.replace("{" + param + "}", value)
-def _verify_state(
-    client: MantisClient,
-    identity: Identity,
-    read_path: str,
-    path_param: str,
-    resource_id: str,
-    expected_state: dict[str, str],
-    config: MantisConfig,
-) -> bool:
-    """Verifica que el estado del recurso vuelve a ser el esperado."""
-    url = identity.base_url.rstrip("/") + read_path.replace("{" + path_param + "}", resource_id)
-    try:
-        response = client.get(url, headers=identity.headers())
-    except httpx.HTTPError:
-        return False
-    
-    if response.status_code != 200:
-        return False
-
-    try:
-        data = response.json()
-    except ValueError:
-        return False
-    
-    for field, expected_value in expected_state.items():
-        if field in data and str(data[field]) != expected_value:
-            return False
-            
-    return True
-def detect_bola_write(
-    spec: ApiSpec,
-    client: MantisClient,
-    config: MantisConfig,
-    identities: list[Identity],
-) -> tuple[Finding, ...]:
-    """Detect BOLA in write operations (PUT, PATCH, DELETE).
-    
-    REQUIRES a verified reset mechanism to be safe.
-    """
-    if not identities or not config.reset_endpoint:
-        return ()  # Seguridad: no hacemos escrituras sin reset
-
-    lister = identities[0]
-    findings: list[Finding] = []
-
-    for op in spec.operations:
-        if op.method not in (HttpMethod.PUT, HttpMethod.PATCH, HttpMethod.DELETE):
-            continue
-        path_param = _first_path_param(op)
-        if path_param is None:
-            continue
-
-        parent_path = _parent_path(op.path)
-        if parent_path is None:
-            continue
-
-        # Asumimos que existe un GET en la misma ruta para leer el estado
-        read_path = _derive_read_path(op.path, path_param)
-        if read_path is None:
-            continue
-
-        # Listar recursos
-        resource_ids = _list_resource_ids(client, lister, parent_path, config)
-        if not resource_ids:
-            continue
-
-        for resource_id in resource_ids[:3]:  # Límite estricto para escrituras
-            # 1. Resetear a estado conocido
-            if not _reset_lab(client, lister, config):
-                return findings  # Si el reset falla, abortamos la escritura
-
-            # 2. Guardar estado inicial
-            url_read = lister.base_url.rstrip("/") + read_path.replace("{" + path_param + "}", resource_id)
-            try:
-                resp_init = client.get(url_read, headers=lister.headers())
-                initial_state = resp_init.json()
-            except Exception:
-                continue
-
-            # 3. Probar con cada identidad (excepto el lister)
-            for identity in identities[1:]:
-                url_write = identity.base_url.rstrip("/") + op.path.replace("{" + path_param + "}", resource_id)
-                
-                # Cuerpo vacío o genérico para PUT/PATCH
-                payload = {"status": "hacked_by_mantis"} if op.method in (HttpMethod.PUT, HttpMethod.PATCH) else None
-
-                try:
-                    resp_write = client.request(
-                        op.method.value, 
-                        url_write, 
-                        headers=identity.headers(),
-                        json=payload
-                    )
-                except httpx.HTTPError:
-                    continue
-
-                if resp_write.status_code in (200, 201, 204):
-                    # ¡Vulnerabilidad! La identidad pudo escribir.
-                    # 4. Restaurar (Reset)
-                    _reset_lab(client, lister, config)
-                    
-                    # 5. Verificar que se restauró
-                    if not _verify_state(client, lister, read_path, path_param, resource_id, initial_state, config):
-                        # Si no se pudo restaurar, es un problema grave, pero ya detectamos la vulnerabilidad.
-                        pass
-
-                    findings.append(
-                        Finding(
-                            id=f"BOLA-{op.method.value}-{op.path.replace('/', '_')}-{resource_id}-{identity.name}",
-                            type=FindingType.BOLA,
-                            severity=Severity.CRITICAL if op.method is HttpMethod.DELETE else Severity.HIGH,
-                            confidence=Confidence.HIGH,
-                            operation_method=op.method.value,
-                            operation_path=op.path,
-                            identity=identity.name,
-                            summary=f"{identity.name} could {op.method.value} resource {resource_id}",
-                            details=f"Identity '{identity.name}' executed {op.method.value} {op.path} on resource {resource_id} and received {resp_write.status_code}.",
-                            evidence=(
-                                Evidence(description="Read initial state", method="GET", url=url_read, status=200),
-                                Evidence(description=f"Unauthorized {op.method.value}", method=op.method.value, url=url_write, status=resp_write.status_code),
-                            ),
-                            reproduction=(
-                                f"1. Reset lab",
-                                f"2. As {identity.name}, execute {op.method.value} {url_write}",
-                                f"3. Expected 403, got {resp_write.status_code}"
-                            )
-                        )
-                    )
-                    # Salir del bucle de identidades para este recurso tras encontrar un fallo
-                    break 
-
-    return tuple(findings)

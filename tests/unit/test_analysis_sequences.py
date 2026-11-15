@@ -1,9 +1,10 @@
-"""Unit tests for BFLA and state skip detection with MockTransport."""
+﻿"""Unit tests for BFLA and state skip detection with MockTransport."""
 
 import httpx
 import pytest
 
 from mantis.analysis.authorization import Identity
+from mantis.analysis.result import AssessmentState
 from mantis.analysis.sequences import detect_bfla, detect_state_skip
 from mantis.core.config import MantisConfig
 from mantis.spec.models import (
@@ -60,128 +61,6 @@ def _spec() -> ApiSpec:
     )
 
 
-def test_detects_bfla_when_employee_can_approve():
-    """Employee executes approve. Admin can too. Both change state. BFLA."""
-
-    state = {"status": "submitted"}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        path = request.url.path
-        key = request.headers.get("x-api-key", "")
-
-        if path == "/lab/reset":
-            state["status"] = "submitted"
-            return httpx.Response(200, json={"status": "reset"})
-
-        if path == "/invoices":
-            return httpx.Response(200, json=[{"id": 2}])
-
-        if path == "/invoices/2":
-            return httpx.Response(200, json={"id": 2, "status": state["status"]})
-
-        if path == "/invoices/2/approve":
-            if state["status"] == "submitted":
-                state["status"] = "approved"
-                return httpx.Response(200, json={"status": "approved"})
-            return httpx.Response(409)
-
-        return httpx.Response(404)
-
-    config = _config()
-    with _client(handler, config) as client:
-        findings = detect_bfla(_spec(), client, config, ADMIN, EMPLOYEE)
-
-    assert len(findings) == 1
-    assert findings[0].type.value == "BFLA"
-    assert findings[0].identity == "employee"
-    assert findings[0].confidence.value == "medium"
-
-
-def test_no_bfla_if_employee_gets_403():
-    """Correct behavior: employee gets 403 on approve. No finding."""
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        path = request.url.path
-        key = request.headers.get("x-api-key", "")
-
-        if path == "/lab/reset":
-            return httpx.Response(200)
-
-        if path == "/invoices":
-            return httpx.Response(200, json=[{"id": 2}])
-
-        if path == "/invoices/2":
-            return httpx.Response(200, json={"id": 2, "status": "submitted"})
-
-        if path == "/invoices/2/approve":
-            if key == "lab-admin-key":
-                return httpx.Response(200, json={"status": "approved"})
-            return httpx.Response(403)
-
-        return httpx.Response(404)
-
-    config = _config()
-    with _client(handler, config) as client:
-        findings = detect_bfla(_spec(), client, config, ADMIN, EMPLOYEE)
-
-    assert findings == ()
-
-
-def test_no_bfla_without_privileged_operations():
-    """Without privileged_operations, detect_bfla returns () even if everything else works."""
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=[])
-
-    config = MantisConfig(
-        max_requests=200,
-        requests_per_minute=200,
-        privileged_operations=(),  # empty
-        reset_endpoint="/lab/reset",
-    )
-    with _client(handler, config) as client:
-        findings = detect_bfla(_spec(), client, config, ADMIN, EMPLOYEE)
-
-    assert findings == ()
-
-
-def test_no_bfla_without_reset_endpoint():
-    """Without /lab/reset in spec, detect_bfla returns ()."""
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=[])
-
-    # Spec without /lab/reset
-    read_op = Operation(
-        method=HttpMethod.GET,
-        path="/invoices/{invoice_id}",
-        parameters=(
-            Parameter(name="invoice_id", location=ParameterLocation.PATH, required=True),
-        ),
-    )
-    approve_op = Operation(
-        method=HttpMethod.POST,
-        path="/invoices/{invoice_id}/approve",
-        parameters=(
-            Parameter(name="invoice_id", location=ParameterLocation.PATH, required=True),
-        ),
-    )
-    spec_without_reset = ApiSpec(
-        openapi_version="3.1.0",
-        title="Test",
-        version="1.0.0",
-        operations=(read_op, approve_op),
-    )
-
-    config = _config()
-    with _client(handler, config) as client:
-        findings = detect_bfla(spec_without_reset, client, config, ADMIN, EMPLOYEE)
-
-    assert findings == ()
-
-
-# --- State skip ---
-
 def _spec_with_state_ops() -> ApiSpec:
     """Spec with reset, GET, submit, and approve."""
     reset_op = Operation(method=HttpMethod.POST, path="/lab/reset")
@@ -214,6 +93,134 @@ def _spec_with_state_ops() -> ApiSpec:
     )
 
 
+# --- BFLA ---
+
+def test_detects_bfla_when_employee_can_approve():
+    """Employee executes approve. Admin can too. Both change state. BFLA."""
+
+    state = {"status": "submitted"}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        key = request.headers.get("x-api-key", "")
+
+        if path == "/lab/reset":
+            state["status"] = "submitted"
+            return httpx.Response(200, json={"status": "reset"})
+
+        if path == "/invoices":
+            return httpx.Response(200, json=[{"id": 2}])
+
+        if path == "/invoices/2":
+            return httpx.Response(200, json={"id": 2, "status": state["status"]})
+
+        if path == "/invoices/2/approve":
+            if state["status"] == "submitted":
+                state["status"] = "approved"
+                return httpx.Response(200, json={"status": "approved"})
+            return httpx.Response(409)
+
+        return httpx.Response(404)
+
+    config = _config()
+    with _client(handler, config) as client:
+        result = detect_bfla(_spec(), client, config, ADMIN, EMPLOYEE)
+
+    assert result.state == AssessmentState.CONFIRMED
+    findings = result.findings
+    assert len(findings) == 1
+    assert findings[0].type.value == "BFLA"
+    assert findings[0].identity == "employee"
+    assert findings[0].confidence.value == "medium"
+
+
+def test_no_bfla_if_employee_gets_403():
+    """Correct behavior: employee gets 403 on approve. No finding."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        key = request.headers.get("x-api-key", "")
+
+        if path == "/lab/reset":
+            return httpx.Response(200)
+
+        if path == "/invoices":
+            return httpx.Response(200, json=[{"id": 2}])
+
+        if path == "/invoices/2":
+            return httpx.Response(200, json={"id": 2, "status": "submitted"})
+
+        if path == "/invoices/2/approve":
+            if key == "lab-admin-key":
+                return httpx.Response(200, json={"status": "approved"})
+            return httpx.Response(403)
+
+        return httpx.Response(404)
+
+    config = _config()
+    with _client(handler, config) as client:
+        result = detect_bfla(_spec(), client, config, ADMIN, EMPLOYEE)
+
+    assert result.state == AssessmentState.NOT_FOUND
+    assert result.findings == ()
+
+
+def test_no_bfla_without_privileged_operations():
+    """Without privileged_operations, detect_bfla returns OMITTED."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[])
+
+    config = MantisConfig(
+        max_requests=200,
+        requests_per_minute=200,
+        privileged_operations=(),
+        reset_endpoint="/lab/reset",
+    )
+    with _client(handler, config) as client:
+        result = detect_bfla(_spec(), client, config, ADMIN, EMPLOYEE)
+
+    assert result.state == AssessmentState.OMITTED
+    assert result.findings == ()
+
+
+def test_no_bfla_without_reset_endpoint():
+    """Without /lab/reset in spec, detect_bfla returns NOT_FOUND (no reset to compare)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[])
+
+    read_op = Operation(
+        method=HttpMethod.GET,
+        path="/invoices/{invoice_id}",
+        parameters=(
+            Parameter(name="invoice_id", location=ParameterLocation.PATH, required=True),
+        ),
+    )
+    approve_op = Operation(
+        method=HttpMethod.POST,
+        path="/invoices/{invoice_id}/approve",
+        parameters=(
+            Parameter(name="invoice_id", location=ParameterLocation.PATH, required=True),
+        ),
+    )
+    spec_without_reset = ApiSpec(
+        openapi_version="3.1.0",
+        title="Test",
+        version="1.0.0",
+        operations=(read_op, approve_op),
+    )
+
+    config = _config()
+    with _client(handler, config) as client:
+        result = detect_bfla(spec_without_reset, client, config, ADMIN, EMPLOYEE)
+
+    assert result.state == AssessmentState.NOT_FOUND
+    assert result.findings == ()
+
+
+# --- State Skip ---
+
 def test_detects_state_skip_when_admin_approves_draft():
     """Admin approves a draft invoice directly (V3)."""
 
@@ -241,7 +248,6 @@ def test_detects_state_skip_when_admin_approves_draft():
 
         if path == "/invoices/1/approve":
             if state["status"] == "draft":
-                # V3: skip submitted
                 state["status"] = "approved"
                 return httpx.Response(200, json={"status": "approved"})
             if state["status"] == "submitted":
@@ -254,8 +260,10 @@ def test_detects_state_skip_when_admin_approves_draft():
     spec = _spec_with_state_ops()
     config = _config()
     with _client(handler, config) as client:
-        findings = detect_state_skip(spec, client, config, ADMIN)
+        result = detect_state_skip(spec, client, config, ADMIN)
 
+    assert result.state == AssessmentState.CONFIRMED
+    findings = result.findings
     assert len(findings) == 1
     assert findings[0].type.value == "STATE_SKIP"
     assert findings[0].confidence.value == "medium"
@@ -289,16 +297,17 @@ def test_no_state_skip_if_approve_requires_submitted():
             if state["status"] == "submitted":
                 state["status"] = "approved"
                 return httpx.Response(200, json={"status": "approved"})
-            return httpx.Response(409)  # Correct: rejects draft
+            return httpx.Response(409)
 
         return httpx.Response(404)
 
     spec = _spec_with_state_ops()
     config = _config()
     with _client(handler, config) as client:
-        findings = detect_state_skip(spec, client, config, ADMIN)
+        result = detect_state_skip(spec, client, config, ADMIN)
 
-    assert findings == ()
+    assert result.state == AssessmentState.NOT_FOUND
+    assert result.findings == ()
 
 
 def test_state_skip_with_allowed_transitions_ignores_order():
@@ -329,7 +338,6 @@ def test_state_skip_with_allowed_transitions_ignores_order():
             if state["status"] == "submitted":
                 state["status"] = "approved"
                 return httpx.Response(200)
-            # V3: approve draft directly
             if state["status"] == "draft":
                 state["status"] = "approved"
                 return httpx.Response(200)
@@ -337,7 +345,6 @@ def test_state_skip_with_allowed_transitions_ignores_order():
 
         return httpx.Response(404)
 
-    # Spec with approve BEFORE submit (worst case for order-based heuristic)
     read_op = Operation(
         method=HttpMethod.GET,
         path="/invoices/{invoice_id}",
@@ -364,7 +371,7 @@ def test_state_skip_with_allowed_transitions_ignores_order():
         openapi_version="3.1.0",
         title="Test",
         version="1.0.0",
-        operations=(reset_op, read_op, approve_op, submit_op),  # approve BEFORE submit
+        operations=(reset_op, read_op, approve_op, submit_op),
     )
 
     config = MantisConfig(
@@ -375,18 +382,18 @@ def test_state_skip_with_allowed_transitions_ignores_order():
         identity_endpoints=("/me",),
     )
     with _client(handler, config) as client:
-        findings = detect_state_skip(spec, client, config, ADMIN)
+        result = detect_state_skip(spec, client, config, ADMIN)
 
-    # With allowed_transitions, approve is correctly identified as state skip
-    # even though it appears first in the spec.
+    assert result.state == AssessmentState.CONFIRMED
+    findings = result.findings
     assert len(findings) == 1
     assert findings[0].type.value == "STATE_SKIP"
     assert "/approve" in findings[0].operation_path
-# --- Safety: no reset endpoint ---
+
 
 def test_bfla_skipped_without_reset_endpoint():
-    """If reset_endpoint is not configured, detect_bfla returns () for safety."""
-    
+    """If reset_endpoint is not configured, detect_bfla returns OMITTED."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=[])
 
@@ -394,28 +401,30 @@ def test_bfla_skipped_without_reset_endpoint():
         max_requests=200,
         requests_per_minute=200,
         privileged_operations=("approve",),
-        reset_endpoint=None,  # <--- SIN RESET EXPLÍCITO
+        reset_endpoint=None,
     )
-    
+
     with _client(handler, config) as client:
-        findings = detect_bfla(_spec(), client, config, ADMIN, EMPLOYEE)
-        
-    assert findings == ()
+        result = detect_bfla(_spec(), client, config, ADMIN, EMPLOYEE)
+
+    assert result.state == AssessmentState.OMITTED
+    assert result.findings == ()
 
 
 def test_state_skip_skipped_without_reset_endpoint():
-    """If reset_endpoint is not configured, detect_state_skip returns () for safety."""
-    
+    """If reset_endpoint is not configured, detect_state_skip returns OMITTED."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=[])
 
     config = MantisConfig(
         max_requests=200,
         requests_per_minute=200,
-        reset_endpoint=None,  # <--- SIN RESET EXPLÍCITO
+        reset_endpoint=None,
     )
-    
+
     with _client(handler, config) as client:
-        findings = detect_state_skip(_spec_with_state_ops(), client, config, ADMIN)
-        
-    assert findings == ()
+        result = detect_state_skip(_spec_with_state_ops(), client, config, ADMIN)
+
+    assert result.state == AssessmentState.OMITTED
+    assert result.findings == ()
