@@ -201,7 +201,7 @@ def detect_bola_write(
                         Finding(
                             id=f"BOLA-{op.method.value}-{op.path.replace('/', '_')}-{resource_id}-{identity.name}",
                             type=FindingType.BOLA,
-                            severity=Severity.CRITICAL if op.method is HttpMethod.DELETE else Severity.HIGH,
+                            severity=_assess_severity(op.method),
                             confidence=Confidence.HIGH,
                             operation_method=op.method.value,
                             operation_path=op.path,
@@ -418,7 +418,7 @@ def _probe_resource(
     return Finding(
         id=f"BOLA-{operation.path.replace('/', '_')}-{resource_id}-{test_identity.name}",
         type=FindingType.BOLA,
-        severity=Severity.HIGH,
+        severity=_assess_severity(operation.method, body_test),
         confidence=Confidence.HIGH,
         operation_method=operation.method.value,
         operation_path=operation.path,
@@ -442,6 +442,28 @@ def _probe_resource(
         ),
     )
 
+def _assess_severity(method: HttpMethod, leaked_data: dict | None = None) -> Severity:
+    """Assess the severity of a BOLA finding based on method and leaked data.
+    
+    - DELETE -> CRITICAL
+    - PUT/PATCH -> HIGH
+    - GET with sensitive data (password, token, etc.) -> CRITICAL
+    - GET otherwise -> HIGH
+    """
+    if method is HttpMethod.DELETE:
+        return Severity.CRITICAL
+    
+    if method in (HttpMethod.PUT, HttpMethod.PATCH):
+        return Severity.HIGH
+    
+    # For GET, check if sensitive data is leaked
+    if leaked_data:
+        sensitive_keywords = {"password", "token", "secret", "ssn", "credit_card", "api_key"}
+        keys = {str(k).lower() for k in leaked_data.keys()}
+        if keys & sensitive_keywords:
+            return Severity.CRITICAL
+    
+    return Severity.HIGH
 
 def _build_url(base_url: str, path: str, param: str, value: str) -> str:
     return base_url.rstrip("/") + path.replace("{" + param + "}", value)

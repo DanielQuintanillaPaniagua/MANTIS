@@ -428,3 +428,24 @@ def test_state_skip_skipped_without_reset_endpoint():
 
     assert result.state == AssessmentState.OMITTED
     assert result.findings == ()
+from mantis.analysis.authorization import _assess_severity
+
+
+def test_severity_delete_is_critical():
+    from mantis.spec.models import HttpMethod
+    from mantis.analysis.models import Severity
+    assert _assess_severity(HttpMethod.DELETE) == Severity.CRITICAL
+
+
+def test_severity_get_with_sensitive_data_is_critical():
+    from mantis.spec.models import HttpMethod
+    from mantis.analysis.models import Severity
+    data = {"password": "secret123", "email": "a@b.com"}
+    assert _assess_severity(HttpMethod.GET, data) == Severity.CRITICAL
+
+
+def test_severity_get_normal_is_high():
+    from mantis.spec.models import HttpMethod
+    from mantis.analysis.models import Severity
+    data = {"id": 1, "branch_id": "S001"}
+    assert _assess_severity(HttpMethod.GET, data) == Severity.HIGH

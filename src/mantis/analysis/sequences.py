@@ -23,7 +23,7 @@ from dataclasses import dataclass
 import httpx
 from mantis.analysis.result import AssessmentState, ScanResult
 
-from mantis.analysis.authorization import Identity
+from mantis.analysis.authorization import Identity, _assess_severity
 from mantis.analysis.models import (
     Confidence,
     Evidence,
@@ -297,7 +297,7 @@ def _probe_bfla(
     return Finding(
         id=f"BFLA-{operation.path.replace('/', '_')}-{resource_id}",
         type=FindingType.BFLA,
-        severity=Severity.HIGH,
+        severity=_assess_severity(operation.method),
         confidence=Confidence.MEDIUM,
         operation_method=operation.method.value,
         operation_path=operation.path,
