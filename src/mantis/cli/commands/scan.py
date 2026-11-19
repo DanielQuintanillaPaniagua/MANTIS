@@ -1,4 +1,4 @@
-"""`mantis scan <spec>` command.
+﻿"""`mantis scan <spec>` command.
 
 Loads an OpenAPI spec, runs authorization detection against the
 identities provided, and prints findings.
@@ -198,7 +198,7 @@ def run(args: argparse.Namespace) -> int:
             print(f"error: cannot open log file {args.log}: {exc}", file=sys.stderr)
             return 4
 
-        all_findings: list = []
+    all_findings: list = []
     assessment_states: dict[str, str] = {}
 
     try:
@@ -305,6 +305,13 @@ def _print_human(findings, identities: list[Identity], sequences: bool, states: 
         print("Mode: BOLA + BFLA + state skip")
     else:
         print("Mode: BOLA only (use --sequences for more)")
+    
+    if states:
+        print("Assessment States:")
+        for check, state in states.items():
+            print(f"  - {check:12s}: {state}")
+        print()
+        
     print(f"Findings: {len(findings)}")
     print()
     if not findings:
@@ -321,10 +328,4 @@ def _print_human(findings, identities: list[Identity], sequences: bool, states: 
         print(f"  Reproduction:")
         for step in f.reproduction:
             print(f"    {step}")
-        print()
-    
-        if states:
-        print("Assessment States:")
-        for check, state in states.items():
-            print(f"  - {check:12s}: {state}")
         print()

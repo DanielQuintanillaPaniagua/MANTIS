@@ -1,4 +1,4 @@
-"""BOLA detection (Broken Object Level Authorization).
+﻿"""BOLA detection (Broken Object Level Authorization).
 
 Strategy:
 1. Identify each identity's "scope" by calling /me (or alternatives).
@@ -48,7 +48,19 @@ class Identity:
         return {"X-API-Key": self.api_key}
 
 
-# --- BOLA GET ---
+def _assess_severity(method: HttpMethod, leaked_data: dict | None = None) -> Severity:
+    """Assess the severity of a BOLA finding based on method and leaked data."""
+    if method is HttpMethod.DELETE:
+        return Severity.CRITICAL
+    if method in (HttpMethod.PUT, HttpMethod.PATCH):
+        return Severity.HIGH
+    if leaked_data:
+        sensitive_keywords = {"password", "token", "secret", "ssn", "credit_card", "api_key"}
+        keys = {str(k).lower() for k in leaked_data.keys()}
+        if keys & sensitive_keywords:
+            return Severity.CRITICAL
+    return Severity.HIGH
+
 
 def detect_bola(
     spec: ApiSpec,
@@ -56,21 +68,20 @@ def detect_bola(
     config: MantisConfig,
     identities: list[Identity],
 ) -> ScanResult:
-    """Detect BOLA across a matrix of identities for GET operations."""
+    """Detect BOLA across a matrix of identities."""
     if not identities:
         return ScanResult(state=AssessmentState.OMITTED, reason="No identities provided")
 
-    # Resolve scopes for all identities
     scopes: dict[str, dict[str, str] | None] = {}
     for identity in identities:
         scopes[identity.name] = _resolve_scope(client, identity, config)
 
-    # The first identity is used as the "lister"
     lister = identities[0]
     lister_scope = scopes[lister.name]
     
     findings: list[Finding] = []
     seen: set[tuple[str, str, str]] = set()
+    used_fallback = False
 
     for op in spec.operations:
         if op.method is not HttpMethod.GET:
@@ -86,6 +97,7 @@ def detect_bola(
         resource_ids = _list_resource_ids(client, lister, parent_path, config)
         if not resource_ids:
             resource_ids = [str(i) for i in FALLBACK_ID_RANGE]
+            used_fallback = True
 
         for resource_id in resource_ids[:MAX_LISTED_RESOURCES]:
             for identity in identities:
@@ -118,13 +130,14 @@ def detect_bola(
     if findings:
         return ScanResult(state=AssessmentState.CONFIRMED, findings=tuple(findings))
     
-    if all(scope is None for scope in scopes.values()):
+    if all(s is None for s in scopes.values()):
         return ScanResult(state=AssessmentState.INCONCLUSIVE, reason="Could not resolve scope for any identity")
-
+        
+    if used_fallback:
+        return ScanResult(state=AssessmentState.INCONCLUSIVE, reason="Could not enumerate resources, used fallback IDs")
+        
     return ScanResult(state=AssessmentState.NOT_FOUND)
 
-
-# --- BOLA WRITE ---
 
 def detect_bola_write(
     spec: ApiSpec,
@@ -132,16 +145,9 @@ def detect_bola_write(
     config: MantisConfig,
     identities: list[Identity],
 ) -> ScanResult:
-    """Detect BOLA in write operations (PUT, PATCH, DELETE).
-    
-    REQUIRES a verified reset mechanism to be safe.
-    """
+    """Detect BOLA in write operations (PUT, PATCH, DELETE)."""
     if not config.reset_endpoint:
-        return ScanResult(
-            state=AssessmentState.OMITTED, 
-            reason="No reset_endpoint configured. Write operations are unsafe."
-        )
-        
+        return ScanResult(state=AssessmentState.OMITTED, reason="No reset_endpoint configured.")
     if not identities:
         return ScanResult(state=AssessmentState.OMITTED, reason="No identities provided")
 
@@ -154,11 +160,9 @@ def detect_bola_write(
         path_param = _first_path_param(op)
         if path_param is None:
             continue
-
         parent_path = _parent_path(op.path)
         if parent_path is None:
             continue
-
         read_path = _derive_read_path(op.path, path_param)
         if read_path is None:
             continue
@@ -169,7 +173,7 @@ def detect_bola_write(
 
         for resource_id in resource_ids[:3]:
             if not _reset_lab(client, lister, config):
-                return ScanResult(state=AssessmentState.INCONCLUSIVE, findings=tuple(findings), reason="Reset failed during write test")
+                return ScanResult(state=AssessmentState.INCONCLUSIVE, reason="Reset failed before write test.")
 
             url_read = lister.base_url.rstrip("/") + read_path.replace("{" + path_param + "}", resource_id)
             try:
@@ -180,7 +184,6 @@ def detect_bola_write(
 
             for identity in identities[1:]:
                 url_write = identity.base_url.rstrip("/") + op.path.replace("{" + path_param + "}", resource_id)
-                
                 payload = {"status": "hacked_by_mantis"} if op.method in (HttpMethod.PUT, HttpMethod.PATCH) else None
 
                 try:
@@ -194,14 +197,23 @@ def detect_bola_write(
                     continue
 
                 if resp_write.status_code in (200, 201, 204):
-                    _reset_lab(client, lister, config)
-                    _verify_state(client, lister, read_path, path_param, resource_id, initial_state, config)
+                    # Intentar restaurar
+                    reset_ok = _reset_lab(client, lister, config)
+                    restored = False
+                    if reset_ok:
+                        restored = _verify_state(client, lister, read_path, path_param, resource_id, initial_state, config)
+                    
+                    if not restored:
+                        return ScanResult(
+                            state=AssessmentState.INCONCLUSIVE,
+                            reason=f"Could not restore state after {op.method.value} on resource {resource_id}. Aborting."
+                        )
 
                     findings.append(
                         Finding(
                             id=f"BOLA-{op.method.value}-{op.path.replace('/', '_')}-{resource_id}-{identity.name}",
                             type=FindingType.BOLA,
-                            severity=_assess_severity(op.method),
+                            severity=_assess_severity(op.method, initial_state),
                             confidence=Confidence.HIGH,
                             operation_method=op.method.value,
                             operation_path=op.path,
@@ -225,8 +237,6 @@ def detect_bola_write(
         return ScanResult(state=AssessmentState.CONFIRMED, findings=tuple(findings))
     return ScanResult(state=AssessmentState.NOT_FOUND)
 
-
-# --- Helpers ---
 
 def _resolve_scope(
     client: MantisClient, identity: Identity, config: MantisConfig
@@ -255,6 +265,32 @@ def _resolve_scope(
     return None
 
 
+def _verify_state(
+    client: MantisClient,
+    identity: Identity,
+    read_path: str,
+    path_param: str,
+    resource_id: str,
+    expected_state: dict[str, str],
+    config: MantisConfig,
+) -> bool:
+    url = identity.base_url.rstrip("/") + read_path.replace("{" + path_param + "}", resource_id)
+    try:
+        response = client.get(url, headers=identity.headers())
+    except httpx.HTTPError:
+        return False
+    if response.status_code != 200:
+        return False
+    try:
+        data = response.json()
+    except ValueError:
+        return False
+    for field, expected_value in expected_state.items():
+        if field in data and str(data[field]) != expected_value:
+            return False
+    return True
+
+
 def _first_path_param(op: Operation) -> str | None:
     for p in op.parameters:
         if p.location.value == "path":
@@ -267,14 +303,6 @@ def _parent_path(path: str) -> str | None:
         return None
     parent = path.split("/{", 1)[0]
     return parent if parent else None
-
-
-def _derive_read_path(operation_path: str, path_param: str) -> str | None:
-    marker = "{" + path_param + "}"
-    if marker not in operation_path:
-        return None
-    idx = operation_path.index(marker) + len(marker)
-    return operation_path[:idx]
 
 
 def _list_resource_ids(
@@ -314,36 +342,6 @@ def _reset_lab(client: MantisClient, identity: Identity, config: MantisConfig) -
     return response.status_code in (200, 204)
 
 
-def _verify_state(
-    client: MantisClient,
-    identity: Identity,
-    read_path: str,
-    path_param: str,
-    resource_id: str,
-    expected_state: dict[str, str],
-    config: MantisConfig,
-) -> bool:
-    url = identity.base_url.rstrip("/") + read_path.replace("{" + path_param + "}", resource_id)
-    try:
-        response = client.get(url, headers=identity.headers())
-    except httpx.HTTPError:
-        return False
-    
-    if response.status_code != 200:
-        return False
-
-    try:
-        data = response.json()
-    except ValueError:
-        return False
-    
-    for field, expected_value in expected_state.items():
-        if field in data and str(data[field]) != expected_value:
-            return False
-            
-    return True
-
-
 def _probe_resource(
     *,
     client: MantisClient,
@@ -363,7 +361,6 @@ def _probe_resource(
         response_lister = client.get(url_lister, headers=identity.headers())
     except httpx.HTTPError:
         return None
-
     if response_lister.status_code != 200:
         return None
 
@@ -371,7 +368,6 @@ def _probe_resource(
         response_test = client.get(url_test, headers=test_identity.headers())
     except httpx.HTTPError:
         return None
-
     if response_test.status_code != 200:
         return None
 
@@ -379,7 +375,6 @@ def _probe_resource(
         body_test = response_test.json()
     except ValueError:
         return None
-
     if not isinstance(body_test, dict):
         return None
 
@@ -410,10 +405,7 @@ def _probe_resource(
         ),
     )
 
-    mismatch_desc = ", ".join(
-        f"{field}: {ident_val} vs {res_val}"
-        for field, ident_val, res_val in mismatches
-    )
+    mismatch_desc = ", ".join(f"{f}: {i} vs {r}" for f, i, r in mismatches)
 
     return Finding(
         id=f"BOLA-{operation.path.replace('/', '_')}-{resource_id}-{test_identity.name}",
@@ -423,47 +415,19 @@ def _probe_resource(
         operation_method=operation.method.value,
         operation_path=operation.path,
         identity=test_identity.name,
-        summary=(
-            f"{test_identity.name} can access resource {resource_id} "
-            f"outside its scope ({mismatch_desc})"
-        ),
+        summary=f"{test_identity.name} can access resource {resource_id} outside its scope ({mismatch_desc})",
         details=(
-            f"Identity '{test_identity.name}' (scope: {test_scope}) accessed "
-            f"resource '{resource_id}' via {operation.method.value} {operation.path}. "
-            f"The resource's ownership fields do not match: {mismatch_desc}. "
-            f"Expected 403, got 200."
+            f"Identity '{test_identity.name}' (scope: {test_scope}) accessed resource '{resource_id}' "
+            f"via {operation.method.value} {operation.path}. Expected 403, got 200."
         ),
         evidence=evidence,
         reproduction=(
-            f"1. Use identity '{test_identity.name}' (API key: {test_identity.api_key[:8]}...)",
+            f"1. Use identity '{test_identity.name}'",
             f"2. GET {url_test}",
-            f"3. Expected 403 (resource outside scope), got {response_test.status_code}",
-            f"4. Compare with identity '{identity.name}' on same URL: {response_lister.status_code}",
+            f"3. Expected 403, got {response_test.status_code}",
         ),
     )
 
-def _assess_severity(method: HttpMethod, leaked_data: dict | None = None) -> Severity:
-    """Assess the severity of a BOLA finding based on method and leaked data.
-    
-    - DELETE -> CRITICAL
-    - PUT/PATCH -> HIGH
-    - GET with sensitive data (password, token, etc.) -> CRITICAL
-    - GET otherwise -> HIGH
-    """
-    if method is HttpMethod.DELETE:
-        return Severity.CRITICAL
-    
-    if method in (HttpMethod.PUT, HttpMethod.PATCH):
-        return Severity.HIGH
-    
-    # For GET, check if sensitive data is leaked
-    if leaked_data:
-        sensitive_keywords = {"password", "token", "secret", "ssn", "credit_card", "api_key"}
-        keys = {str(k).lower() for k in leaked_data.keys()}
-        if keys & sensitive_keywords:
-            return Severity.CRITICAL
-    
-    return Severity.HIGH
 
 def _build_url(base_url: str, path: str, param: str, value: str) -> str:
     return base_url.rstrip("/") + path.replace("{" + param + "}", value)
