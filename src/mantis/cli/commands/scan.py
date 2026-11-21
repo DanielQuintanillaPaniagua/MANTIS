@@ -21,7 +21,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-
+import os
 import httpx
 
 from mantis.analysis.authorization import Identity, detect_bola, detect_bola_write
@@ -134,16 +134,26 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 def _parse_identities(pairs: list[str], base_url: str) -> list[Identity]:
     result: list[Identity] = []
     for pair in pairs:
-        if ":" not in pair:
-            raise ValueError(f"Invalid identity (expected NAME:KEY): {pair!r}")
-        name, _, key = pair.partition(":")
-        name = name.strip()
-        key = key.strip()
+        if ":" in pair:
+            # Legacy: name:key
+            name, _, key = pair.partition(":")
+            name = name.strip()
+            key = key.strip()
+        else:
+            # New: just name, read key from env var MANTIS_KEY_<NAME>
+            name = pair.strip()
+            env_var = f"MANTIS_KEY_{name.upper().replace('-', '_')}"
+            key = os.environ.get(env_var, "")
+            if not key:
+                raise ValueError(
+                    f"Identity '{name}' requires key via --identity {name}:<key> "
+                    f"or environment variable {env_var}"
+                )
+        
         if not name or not key:
-            raise ValueError(f"Invalid identity (empty name or key): {pair!r}")
+            raise ValueError(f"Invalid identity: {pair!r}")
         result.append(Identity(name=name, api_key=key, base_url=base_url))
     return result
-
 
 def _build_config(args: argparse.Namespace) -> MantisConfig:
     kwargs = {}
@@ -213,11 +223,12 @@ def run(args: argparse.Namespace) -> int:
 
             if args.sequences:
                 if len(identities) >= 2:
-                    res_bfla = detect_bfla(spec, client, config, identities[0], identities[1])
+                    # El primer identity es el privilegiado, el resto son los que se prueban
+                    res_bfla = detect_bfla(spec, client, config, identities[0], identities[1:])
                     assessment_states["BFLA"] = res_bfla.state.value
                     all_findings.extend(res_bfla.findings)
                 
-                res_skip = detect_state_skip(spec, client, config, identities[0])
+                res_skip = detect_state_skip(spec, client, config, identities[1:])
                 assessment_states["STATE_SKIP"] = res_skip.state.value
                 all_findings.extend(res_skip.findings)
     except EvidenceWriteError as exc:

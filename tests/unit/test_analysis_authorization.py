@@ -1,4 +1,4 @@
-"""Unit tests for BFLA and state skip detection with MockTransport."""
+﻿"""Unit tests for BFLA and state skip detection with MockTransport."""
 
 import httpx
 import pytest
@@ -124,7 +124,7 @@ def test_detects_bfla_when_employee_can_approve():
 
     config = _config()
     with _client(handler, config) as client:
-        result = detect_bfla(_spec(), client, config, ADMIN, EMPLOYEE)
+        result = detect_bfla(_spec(), client, config, ADMIN, [EMPLOYEE])
 
     assert result.state == AssessmentState.CONFIRMED
     findings = result.findings
@@ -159,7 +159,7 @@ def test_no_bfla_if_employee_gets_403():
 
     config = _config()
     with _client(handler, config) as client:
-        result = detect_bfla(_spec(), client, config, ADMIN, EMPLOYEE)
+        result = detect_bfla(_spec(), client, config, ADMIN, [EMPLOYEE])
 
     assert result.state == AssessmentState.NOT_FOUND
     assert result.findings == ()
@@ -178,7 +178,7 @@ def test_no_bfla_without_privileged_operations():
         reset_endpoint="/lab/reset",
     )
     with _client(handler, config) as client:
-        result = detect_bfla(_spec(), client, config, ADMIN, EMPLOYEE)
+        result = detect_bfla(_spec(), client, config, ADMIN, [EMPLOYEE])
 
     assert result.state == AssessmentState.OMITTED
     assert result.findings == ()
@@ -213,7 +213,7 @@ def test_no_bfla_without_reset_endpoint():
 
     config = _config()
     with _client(handler, config) as client:
-        result = detect_bfla(spec_without_reset, client, config, ADMIN, EMPLOYEE)
+        result = detect_bfla(spec_without_reset, client, config, ADMIN, [EMPLOYEE])
 
     assert result.state == AssessmentState.NOT_FOUND
     assert result.findings == ()
@@ -260,7 +260,7 @@ def test_detects_state_skip_when_admin_approves_draft():
     spec = _spec_with_state_ops()
     config = _config()
     with _client(handler, config) as client:
-        result = detect_state_skip(spec, client, config, ADMIN)
+        result = detect_state_skip(spec, client, config, [ADMIN])
 
     assert result.state == AssessmentState.CONFIRMED
     findings = result.findings
@@ -304,7 +304,7 @@ def test_no_state_skip_if_approve_requires_submitted():
     spec = _spec_with_state_ops()
     config = _config()
     with _client(handler, config) as client:
-        result = detect_state_skip(spec, client, config, ADMIN)
+        result = detect_state_skip(spec, client, config, [ADMIN])
 
     assert result.state == AssessmentState.NOT_FOUND
     assert result.findings == ()
@@ -382,7 +382,7 @@ def test_state_skip_with_allowed_transitions_ignores_order():
         identity_endpoints=("/me",),
     )
     with _client(handler, config) as client:
-        result = detect_state_skip(spec, client, config, ADMIN)
+        result = detect_state_skip(spec, client, config, [ADMIN])
 
     assert result.state == AssessmentState.CONFIRMED
     findings = result.findings
@@ -405,7 +405,7 @@ def test_bfla_skipped_without_reset_endpoint():
     )
 
     with _client(handler, config) as client:
-        result = detect_bfla(_spec(), client, config, ADMIN, EMPLOYEE)
+        result = detect_bfla(_spec(), client, config, ADMIN, [EMPLOYEE])
 
     assert result.state == AssessmentState.OMITTED
     assert result.findings == ()
@@ -424,7 +424,7 @@ def test_state_skip_skipped_without_reset_endpoint():
     )
 
     with _client(handler, config) as client:
-        result = detect_state_skip(_spec_with_state_ops(), client, config, ADMIN)
+        result = detect_state_skip(_spec_with_state_ops(), client, config, [ADMIN])
 
     assert result.state == AssessmentState.OMITTED
     assert result.findings == ()

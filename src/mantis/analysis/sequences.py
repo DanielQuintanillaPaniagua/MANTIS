@@ -50,23 +50,20 @@ def detect_bfla(
     spec: ApiSpec,
     client: MantisClient,
     config: MantisConfig,
-    identity_a: Identity,
-    identity_b: Identity,
+    privileged_identity: Identity,
+    test_identities: list[Identity],
 ) -> ScanResult:
     """Detect BFLA between a privileged and a limited identity.
 
     Requires /lab/reset in the spec to reset between probes.
     Without reset, returns () and warns.
     """
-    # Si no hay reset_endpoint configurado, no podemos hacer BFLA de forma segura
     if not config.reset_endpoint:
         return ScanResult(state=AssessmentState.OMITTED, reason="No reset_endpoint configured.")
 
     findings: list[Finding] = []
 
     if not config.privileged_operations:
-        # Without a declaration of privileged operations, we cannot
-        # distinguish legitimate state changes from privileged ones.
         return ScanResult(state=AssessmentState.OMITTED, reason="No privileged_operations configured.")
 
     for op in spec.operations:
@@ -78,32 +75,33 @@ def detect_bfla(
         if path_param is None:
             continue
 
-        # List B's resources (limited identity) at parent path.
         parent_path = _parent_path(op.path)
         if parent_path is None:
             continue
 
-        b_resources = _list_resource_ids(client, identity_b, parent_path, config)
-        if not b_resources:
-            continue
+        for test_identity in test_identities:
+            b_resources = _list_resource_ids(client, test_identity, parent_path, config)
+            if not b_resources:
+                continue
 
-        for resource_id in b_resources[:MAX_PROBES_PER_OPERATION]:
-            finding = _probe_bfla(
-                client=client,
-                spec=spec,
-                operation=op,
-                path_param=path_param,
-                resource_id=resource_id,
-                identity_a=identity_a,
-                identity_b=identity_b,
-                config=config,
-            )
-            if finding is not None:
-                findings.append(finding)
+            for resource_id in b_resources[:MAX_PROBES_PER_OPERATION]:
+                finding = _probe_bfla(
+                    client=client,
+                    spec=spec,
+                    operation=op,
+                    path_param=path_param,
+                    resource_id=resource_id,
+                    identity_a=privileged_identity,
+                    identity_b=test_identity,
+                    config=config,
+                )
+                if finding is not None:
+                    findings.append(finding)
 
     if findings:
         return ScanResult(state=AssessmentState.CONFIRMED, findings=tuple(findings))
     return ScanResult(state=AssessmentState.NOT_FOUND)
+
 
 def _first_path_param(op: Operation) -> str | None:
     for p in op.parameters:
@@ -142,12 +140,12 @@ def _list_resource_ids(
     return ids
 
 
-def _reset_lab(client: MantisClient, identity_a: Identity, config: MantisConfig) -> bool:
+def _reset_lab(client: MantisClient, identity: Identity, config: MantisConfig) -> bool:
     if not config.reset_endpoint:
         return False
-    url = identity_a.base_url.rstrip("/") + config.reset_endpoint
+    url = identity.base_url.rstrip("/") + config.reset_endpoint
     try:
-        response = client.post(url, headers=identity_a.headers())
+        response = client.post(url, headers=identity.headers())
     except httpx.HTTPError:
         return False
     return response.status_code in (200, 204)
@@ -217,21 +215,10 @@ def _probe_bfla(
     identity_b: Identity,
     config: MantisConfig,
 ) -> Finding | None:
-    """Probe one resource for BFLA.
-
-    - Get the resource path (for reading state).
-    - Probe with A: reset, execute, verify state change.
-    - Probe with B: reset, execute, verify state change.
-    - Compare: if both succeeded and both changed state, report BFLA.
-    """
-    # Find a GET operation on the PARENT path (e.g. /invoices/{invoice_id})
-    # to read the resource's state. The operation itself is a POST.
+    """Probe one resource for BFLA."""
     parent_path = _parent_path(operation.path)
     if parent_path is None:
         return None
-    # The read path is parent_path + "/{param}" + anything after.
-    # For /invoices/{invoice_id}/approve, parent is /invoices,
-    # and the read path is /invoices/{invoice_id}.
     read_path = _derive_read_path(operation.path, path_param)
     if read_path is None:
         return None
@@ -255,7 +242,7 @@ def _probe_bfla(
     if state_a_before is None or state_a_after is None:
         return None
     if state_a_before == state_a_after:
-        return None  # No effect with A, cannot compare
+        return None
 
     # Probe with B
     if not _reset_lab(client, identity_a, config):
@@ -273,9 +260,8 @@ def _probe_bfla(
     if state_b_before is None or state_b_after is None:
         return None
     if state_b_before == state_b_after:
-        return None  # No effect with B, not BFLA
+        return None
 
-    # Both A and B succeeded with state change
     evidence = (
         Evidence(
             description=f"{identity_a.name} executes {operation.method.value} {operation.path} on resource {resource_id}",
@@ -339,25 +325,14 @@ def _describe_transition(before: dict[str, str], after: dict[str, str]) -> str:
 
 
 def _derive_read_path(operation_path: str, path_param: str) -> str | None:
-    """Derive the read path from a state-changing path.
-
-    Examples:
-        /invoices/{invoice_id}/approve + invoice_id -> /invoices/{invoice_id}
-        /invoices/{invoice_id} + invoice_id -> /invoices/{invoice_id}
-    """
     marker = "{" + path_param + "}"
     if marker not in operation_path:
         return None
-    # Cut everything after the path param
     idx = operation_path.index(marker) + len(marker)
     return operation_path[:idx]
 
 
 def _is_privileged(path: str, privileged_operations: tuple[str, ...]) -> bool:
-    """Return True if the path contains any of the privileged operation markers.
-
-    Example: path="/invoices/{invoice_id}/approve", markers=("approve",) -> True
-    """
     return any(marker in path for marker in privileged_operations)
 
 
@@ -365,26 +340,12 @@ def detect_state_skip(
     spec: ApiSpec,
     client: MantisClient,
     config: MantisConfig,
-    identity_a: Identity,
+    test_identities: list[Identity],
 ) -> ScanResult:
-    """Detect state skip vulnerabilities.
-
-    Strategy:
-    1. Reset lab, list resources in 'draft' state.
-    2. Observe natural transition: the first state-changing operation
-       that succeeds on a 'draft' resource and changes its state.
-    3. For each other state-changing operation:
-       - Reset lab, get a 'draft' resource.
-       - Execute the operation.
-       - If state changed, report STATE_SKIP.
-
-    Requires /lab/reset in the spec. Returns () otherwise.
-    """
-    # Si no hay reset_endpoint configurado, no podemos hacer State Skip de forma segura
+    """Detect state skip vulnerabilities."""
     if not config.reset_endpoint:
         return ScanResult(state=AssessmentState.OMITTED, reason="No reset_endpoint configured.")
 
-    # Find candidate state-changing operations with a path param
     state_ops = []
     for op in spec.operations:
         if op.method not in STATE_CHANGING_METHODS:
@@ -404,38 +365,34 @@ def detect_state_skip(
         state_ops.append((op, path_param, read_op))
 
     if len(state_ops) < 2:
-        return ScanResult(state=AssessmentState.OMITTED, reason="Not enough state-changing operations found.")  # Need at least two to distinguish natural from skip
+        return ScanResult(state=AssessmentState.OMITTED, reason="Not enough state-changing operations found.")
 
-    # Parse allowed_transitions if configured
     allowed = _parse_transitions(config.allowed_transitions)
-
-    # Determine the natural transition.
-    # If allowed_transitions is configured, use it to identify which
-    # operations are "allowed" (natural). Otherwise, fall back to the
-    # heuristic: first op in spec order that moves a draft resource.
     natural_op_paths: set[str] = set()
     use_declared = bool(allowed)
 
+    # Usamos la primera identidad disponible como referencia
+    primary_identity = test_identities[0]
+
     if use_declared:
-        # Find which operations produce an allowed transition
         for op, path_param, read_op in state_ops:
-            if not _reset_lab(client, identity_a, config):
+            if not _reset_lab(client, primary_identity, config):
                 continue
             draft_id = _find_draft_resource(
-                client, identity_a, read_op.path, path_param, config
+                client, primary_identity, read_op.path, path_param, config
             )
             if draft_id is None:
                 continue
             status_before = _get_state(
-                client, identity_a, read_op.path, path_param, draft_id, config
+                client, primary_identity, read_op.path, path_param, draft_id, config
             )
             if status_before is None:
                 continue
-            status_code = _execute(client, identity_a, op, path_param, draft_id)
+            status_code = _execute(client, primary_identity, op, path_param, draft_id)
             if status_code not in (200, 201, 204):
                 continue
             status_after = _get_state(
-                client, identity_a, read_op.path, path_param, draft_id, config
+                client, primary_identity, read_op.path, path_param, draft_id, config
             )
             if status_after is None or status_after == status_before:
                 continue
@@ -443,27 +400,26 @@ def detect_state_skip(
                 natural_op_paths.add(op.path)
 
         if not natural_op_paths:
-            return ScanResult(state=AssessmentState.INCONCLUSIVE, reason="Could not determine natural transition.")  # No allowed transition found. Nothing to compare.
+            return ScanResult(state=AssessmentState.INCONCLUSIVE, reason="Could not determine natural transition.")
     else:
-        # Fallback: heuristic by spec order
         for op, path_param, read_op in state_ops:
-            if not _reset_lab(client, identity_a, config):
+            if not _reset_lab(client, primary_identity, config):
                 continue
             draft_id = _find_draft_resource(
-                client, identity_a, read_op.path, path_param, config
+                client, primary_identity, read_op.path, path_param, config
             )
             if draft_id is None:
                 continue
             status_before = _get_state(
-                client, identity_a, read_op.path, path_param, draft_id, config
+                client, primary_identity, read_op.path, path_param, draft_id, config
             )
             if status_before is None:
                 continue
-            status_code = _execute(client, identity_a, op, path_param, draft_id)
+            status_code = _execute(client, primary_identity, op, path_param, draft_id)
             if status_code not in (200, 201, 204):
                 continue
             status_after = _get_state(
-                client, identity_a, read_op.path, path_param, draft_id, config
+                client, primary_identity, read_op.path, path_param, draft_id, config
             )
             if status_after is None or status_after == status_before:
                 continue
@@ -471,29 +427,28 @@ def detect_state_skip(
             break
 
     if not natural_op_paths:
-        return ScanResult(state=AssessmentState.INCONCLUSIVE, reason="Could not determine natural transition.")  # Cannot determine natural flow
+        return ScanResult(state=AssessmentState.INCONCLUSIVE, reason="Could not determine natural transition.")
 
-    # Phase 2: probe operations that are not part of the natural flow
     findings: list[Finding] = []
     for op, path_param, read_op in state_ops:
         if op.path in natural_op_paths:
             continue
 
-        if not _reset_lab(client, identity_a, config):
+        if not _reset_lab(client, primary_identity, config):
             continue
         draft_id = _find_draft_resource(
-            client, identity_a, read_op.path, path_param, config
+            client, primary_identity, read_op.path, path_param, config
         )
         if draft_id is None:
             continue
         status_before = _get_state(
-            client, identity_a, read_op.path, path_param, draft_id, config
+            client, primary_identity, read_op.path, path_param, draft_id, config
         )
         if status_before is None:
             continue
-        status_code = _execute(client, identity_a, op, path_param, draft_id)
+        status_code = _execute(client, primary_identity, op, path_param, draft_id)
         status_after = _get_state(
-            client, identity_a, read_op.path, path_param, draft_id, config
+            client, primary_identity, read_op.path, path_param, draft_id, config
         )
 
         if status_code not in (200, 201, 204):
@@ -502,7 +457,7 @@ def detect_state_skip(
             continue
 
         transition = _describe_transition(status_before, status_after)
-        url = identity_a.base_url.rstrip("/") + op.path.replace(
+        url = primary_identity.base_url.rstrip("/") + op.path.replace(
             "{" + path_param + "}", draft_id
         )
 
@@ -510,11 +465,11 @@ def detect_state_skip(
             Finding(
                 id=f"STATE_SKIP-{op.path.replace('/', '_')}-{draft_id}",
                 type=FindingType.STATE_SKIP,
-                severity=Severity.HIGH,
+                severity=_assess_severity(op.method),
                 confidence=Confidence.MEDIUM,
                 operation_method=op.method.value,
                 operation_path=op.path,
-                identity=identity_a.name,
+                identity=primary_identity.name,
                 summary=(
                     f"{op.method.value} {op.path} moved a resource from "
                     f"{_primary_state(status_before)} to "
@@ -528,7 +483,7 @@ def detect_state_skip(
                 ),
                 evidence=(
                     Evidence(
-                        description=f"{identity_a.name} executes {op.method.value} {op.path} on resource {draft_id}",
+                        description=f"{primary_identity.name} executes {op.method.value} {op.path} on resource {draft_id}",
                         method=op.method.value,
                         url=url,
                         status=status_code,
@@ -548,6 +503,7 @@ def detect_state_skip(
         return ScanResult(state=AssessmentState.CONFIRMED, findings=tuple(findings))
     return ScanResult(state=AssessmentState.NOT_FOUND)
 
+
 def _find_draft_resource(
     client: MantisClient,
     identity: Identity,
@@ -562,7 +518,6 @@ def _find_draft_resource(
         state = _get_state(client, identity, read_path, path_param, resource_id, config)
         if state is None:
             continue
-        # Consider "draft" or any state whose primary value is "draft"
         primary = _primary_state(state)
         if primary == "draft":
             return resource_id
@@ -579,11 +534,7 @@ def _primary_state(state: dict[str, str]) -> str:
 def _parse_transitions(
     raw: tuple[str, ...],
 ) -> dict[str, dict[str, list[str]]]:
-    """Parse allowed_transitions strings like 'status:draft->submitted'.
-
-    Returns {field: {from_state: [to_state, ...]}}.
-    Malformed entries are silently skipped.
-    """
+    """Parse allowed_transitions strings like 'status:draft->submitted'."""
     result: dict[str, dict[str, list[str]]] = {}
     for item in raw:
         if ":" not in item or "->" not in item:
@@ -604,11 +555,7 @@ def _is_allowed_transition(
     before: dict[str, str],
     after: dict[str, str],
 ) -> bool:
-    """Check if the transition from `before` to `after` is in `allowed`.
-
-    A transition is allowed if, for each field that changed, the change
-    is declared. Fields that did not change are ignored.
-    """
+    """Check if the transition from `before` to `after` is in `allowed`."""
     any_change = False
     for field, before_value in before.items():
         if field not in after:
@@ -617,7 +564,6 @@ def _is_allowed_transition(
         if before_value == after_value:
             continue
         any_change = True
-        # Check declared transitions for this field
         field_transitions = allowed.get(field, {})
         allowed_targets = field_transitions.get(before_value, [])
         if after_value not in allowed_targets:
