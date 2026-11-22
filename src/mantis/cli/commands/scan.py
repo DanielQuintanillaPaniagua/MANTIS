@@ -3,9 +3,6 @@
 Loads an OpenAPI spec, runs authorization detection against the
 identities provided, and prints findings.
 
-By default, only BOLA (MK-005) is detected.
-With --sequences, BFLA and state skip (MK-006) are also detected.
-
 Exit codes:
     0 -> no findings
     1 -> one or more findings
@@ -19,9 +16,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
-import os
+
 import httpx
 
 from mantis.analysis.authorization import Identity, detect_bola, detect_bola_write
@@ -51,10 +49,11 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "--identity",
         action="append",
         required=True,
-        metavar="NAME:KEY",
+        metavar="NAME[:KEY]",
         help=(
             "Identity to test. Repeatable. "
-            "Example: --identity admin:lab-admin-key --identity employee:lab-employee-key"
+            "Format: 'name:key' (legacy) or just 'name' to read key from MANTIS_KEY_<NAME>. "
+            "Example: --identity admin:lab-admin-key OR --identity admin (with MANTIS_KEY_ADMIN set)."
         ),
     )
     parser.add_argument(
@@ -65,7 +64,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument(
         "--sequences",
         action="store_true",
-        help="Also run BFLA and state skip detection (MK-006).",
+        help="Also run BFLA and state skip detection.",
     )
     parser.add_argument(
         "--privileged-operations",
@@ -149,11 +148,12 @@ def _parse_identities(pairs: list[str], base_url: str) -> list[Identity]:
                     f"Identity '{name}' requires key via --identity {name}:<key> "
                     f"or environment variable {env_var}"
                 )
-        
+
         if not name or not key:
             raise ValueError(f"Invalid identity: {pair!r}")
         result.append(Identity(name=name, api_key=key, base_url=base_url))
     return result
+
 
 def _build_config(args: argparse.Namespace) -> MantisConfig:
     kwargs = {}
@@ -223,7 +223,6 @@ def run(args: argparse.Namespace) -> int:
 
             if args.sequences:
                 if len(identities) >= 2:
-                    # El primer identity es el privilegiado, el resto son los que se prueban
                     res_bfla = detect_bfla(spec, client, config, identities[0], identities[1:])
                     assessment_states["BFLA"] = res_bfla.state.value
                     all_findings.extend(res_bfla.findings)
