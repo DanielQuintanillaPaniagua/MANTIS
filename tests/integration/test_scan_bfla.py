@@ -1,4 +1,4 @@
-"""Integration test for BFLA detection using in-memory lab."""
+﻿"""Integration test for BFLA detection using in-memory lab."""
 
 from pathlib import Path
 
@@ -35,10 +35,10 @@ def test_bfla_detected_on_approve(mantis_client):
     config = _bfla_config()
 
     with mantis_client(config) as client:
-        findings = detect_bfla(spec, client, config, admin, employee)
+        result = detect_bfla(spec, client, config, admin, [employee])
 
-    bfla_findings = [f for f in findings if f.type.value == "BFLA"]
-    assert len(bfla_findings) >= 1, f"No BFLA found. All: {[f.id for f in findings]}"
+    bfla_findings = [f for f in result.findings if f.type.value == "BFLA"]
+    assert len(bfla_findings) >= 1, f"No BFLA found. All: {[f.id for f in result.findings]}"
 
     approve_finding = next(
         f for f in bfla_findings if "/approve" in f.operation_path
@@ -56,9 +56,9 @@ def test_bfla_not_detected_on_submit(mantis_client):
     config = _bfla_config()
 
     with mantis_client(config) as client:
-        findings = detect_bfla(spec, client, config, admin, employee)
+        result = detect_bfla(spec, client, config, admin, [employee])
 
-    submit_findings = [f for f in findings if "/submit" in f.operation_path]
+    submit_findings = [f for f in result.findings if "/submit" in f.operation_path]
     assert submit_findings == [], (
         f"Submit is legitimate for employee, should not be BFLA: {[f.id for f in submit_findings]}"
     )
@@ -73,8 +73,8 @@ def test_bfla_is_deterministic(mantis_client):
 
     def _run():
         with mantis_client(config) as client:
-            return detect_bfla(spec, client, config, admin, employee)
+            return detect_bfla(spec, client, config, admin, [employee])
 
-    ids_a = sorted(f.id for f in _run())
-    ids_b = sorted(f.id for f in _run())
+    ids_a = sorted(f.id for f in _run().findings)
+    ids_b = sorted(f.id for f in _run().findings)
     assert ids_a == ids_b
