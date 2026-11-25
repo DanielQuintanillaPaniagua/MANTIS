@@ -179,8 +179,8 @@ def run(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
-    if not identities:
-        print("error: at least one --identity argument is required", file=sys.stderr)
+    if len(identities) < 2:
+        print("error: at least two --identity arguments are required", file=sys.stderr)
         return 2
 
     try:
@@ -227,7 +227,9 @@ def run(args: argparse.Namespace) -> int:
                     assessment_states["BFLA"] = res_bfla.state.value
                     all_findings.extend(res_bfla.findings)
                 
-                res_skip = detect_state_skip(spec, client, config, identities[1:])
+                res_skip = detect_state_skip(
+                    spec, client, config, identities[1:], reset_identity=identities[0]
+                )
                 assessment_states["STATE_SKIP"] = res_skip.state.value
                 all_findings.extend(res_skip.findings)
     except EvidenceWriteError as exc:

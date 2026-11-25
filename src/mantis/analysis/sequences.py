@@ -341,10 +341,18 @@ def detect_state_skip(
     client: MantisClient,
     config: MantisConfig,
     test_identities: list[Identity],
+    reset_identity: Identity | None = None,
 ) -> ScanResult:
-    """Detect state skip vulnerabilities."""
+    """Detect state skip vulnerabilities.
+
+    `reset_identity` is the identity used to call the reset endpoint. It
+    usually needs privileges (e.g. admin), so it must not default to the
+    limited test identity. If omitted, the first test identity is used.
+    """
     if not config.reset_endpoint:
         return ScanResult(state=AssessmentState.OMITTED, reason="No reset_endpoint configured.")
+    if not test_identities:
+        return ScanResult(state=AssessmentState.OMITTED, reason="No test identities provided.")
 
     state_ops = []
     for op in spec.operations:
@@ -373,10 +381,11 @@ def detect_state_skip(
 
     # Usamos la primera identidad disponible como referencia
     primary_identity = test_identities[0]
+    resetter = reset_identity or primary_identity
 
     if use_declared:
         for op, path_param, read_op in state_ops:
-            if not _reset_lab(client, primary_identity, config):
+            if not _reset_lab(client, resetter, config):
                 continue
             draft_id = _find_draft_resource(
                 client, primary_identity, read_op.path, path_param, config
@@ -403,7 +412,7 @@ def detect_state_skip(
             return ScanResult(state=AssessmentState.INCONCLUSIVE, reason="Could not determine natural transition.")
     else:
         for op, path_param, read_op in state_ops:
-            if not _reset_lab(client, primary_identity, config):
+            if not _reset_lab(client, resetter, config):
                 continue
             draft_id = _find_draft_resource(
                 client, primary_identity, read_op.path, path_param, config
@@ -434,7 +443,7 @@ def detect_state_skip(
         if op.path in natural_op_paths:
             continue
 
-        if not _reset_lab(client, primary_identity, config):
+        if not _reset_lab(client, resetter, config):
             continue
         draft_id = _find_draft_resource(
             client, primary_identity, read_op.path, path_param, config

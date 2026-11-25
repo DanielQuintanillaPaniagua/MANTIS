@@ -10,8 +10,10 @@
       "status:draft->submitted",
       "status:submitted->approved"
     ],
-    "max_requests": 200,
-    "base_url": "http://127.0.0.1:8000"
+    "max_requests": 300,
+    "base_url": "http://127.0.0.1:8000",
+    "reset_endpoint": "/lab/reset",
+    "identity_endpoints": []
   },
   "identities": [
     {
@@ -23,11 +25,11 @@
   ],
   "expected_findings": [
     {
-      "id": "BOLA-_invoices_{invoice_id}-3",
+      "id": "BOLA-_invoices_{invoice_id}-3-employee",
       "type": "BOLA"
     },
     {
-      "id": "BOLA-_invoices_{invoice_id}-4",
+      "id": "BOLA-_invoices_{invoice_id}-4-employee",
       "type": "BOLA"
     },
     {

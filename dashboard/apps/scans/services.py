@@ -14,7 +14,7 @@ import datetime
 from django.utils import timezone
 from django.conf import settings
 from pathlib import Path
-from mantis.analysis.authorization import Identity, detect_bola
+from mantis.analysis.authorization import Identity, detect_bola, detect_bola_write
 from mantis.analysis.models import Finding
 from mantis.analysis.sequences import detect_bfla, detect_state_skip
 from mantis.core.config import MantisConfig
@@ -79,6 +79,8 @@ def _execute_engine(scan: Scan, identity_a_key: str, identity_b_key: str) -> tup
         config_kwargs["privileged_operations"] = tuple(options["privileged_operations"])
     if options.get("allowed_transitions"):
         config_kwargs["allowed_transitions"] = tuple(options["allowed_transitions"])
+    if options.get("reset_endpoint"):
+        config_kwargs["reset_endpoint"] = options["reset_endpoint"]
     config = MantisConfig(**config_kwargs)
 
     spec_path = Path(scan.spec_path)
@@ -92,10 +94,18 @@ def _execute_engine(scan: Scan, identity_a_key: str, identity_b_key: str) -> tup
 
     findings: list[Finding] = []
     with MantisClient(config) as client:
-        findings.extend(detect_bola(spec, client, config, identity_a, identity_b))
+        identities = [identity_a, identity_b]
+        findings.extend(detect_bola(spec, client, config, identities).findings)
+        findings.extend(detect_bola_write(spec, client, config, identities).findings)
         if options.get("sequences"):
-            findings.extend(detect_bfla(spec, client, config, identity_a, identity_b))
-            findings.extend(detect_state_skip(spec, client, config, identity_a))
+            findings.extend(
+                detect_bfla(spec, client, config, identity_a, [identity_b]).findings
+            )
+            findings.extend(
+                detect_state_skip(
+                    spec, client, config, [identity_b], reset_identity=identity_a
+                ).findings
+            )
 
     return tuple(findings)
 

@@ -418,7 +418,8 @@ def _probe_resource(
         summary=f"{test_identity.name} can access resource {resource_id} outside its scope ({mismatch_desc})",
         details=(
             f"Identity '{test_identity.name}' (scope: {test_scope}) accessed resource '{resource_id}' "
-            f"via {operation.method.value} {operation.path}. Expected 403, got 200."
+            f"via {operation.method.value} {operation.path}. Expected 403, got 200. "
+            f"Ownership mismatch ({mismatch_desc})."
         ),
         evidence=evidence,
         reproduction=(

@@ -53,7 +53,7 @@ def test_detects_state_skip_on_approve_draft():
     config = _config()
 
     with MantisClient(config) as client:
-        findings = detect_state_skip(spec, client, config, admin)
+        findings = detect_state_skip(spec, client, config, [admin]).findings
 
     assert len(findings) >= 1, f"No state skip found. All: {[f.id for f in findings]}"
     finding = findings[0]
@@ -70,7 +70,7 @@ def test_state_skip_is_deterministic():
 
     def _run():
         with MantisClient(config) as client:
-            return detect_state_skip(spec, client, config, admin)
+            return detect_state_skip(spec, client, config, [admin]).findings
 
     ids_a = sorted(f.id for f in _run())
     ids_b = sorted(f.id for f in _run())
@@ -94,14 +94,14 @@ def test_state_skip_with_allowed_transitions():
     )
 
     with MantisClient(config) as client:
-        findings = detect_state_skip(spec, client, config, admin)
+        findings = detect_state_skip(spec, client, config, [admin]).findings
 
     assert len(findings) >= 1
     assert all(f.type.value == "STATE_SKIP" for f in findings)
     assert all("/approve" in f.operation_path for f in findings)
 
     with MantisClient(config) as client:
-        findings = detect_state_skip(spec, client, config, admin)
+        findings = detect_state_skip(spec, client, config, [admin]).findings
 
     assert len(findings) >= 1
     assert all(f.type.value == "STATE_SKIP" for f in findings)

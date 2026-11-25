@@ -25,7 +25,7 @@ from pathlib import Path
 
 import httpx
 
-from mantis.analysis.authorization import Identity, detect_bola
+from mantis.analysis.authorization import Identity, detect_bola, detect_bola_write
 from mantis.analysis.sequences import detect_bfla, detect_state_skip
 from mantis.cli.commands.ping import DEFAULT_LOG_PATH
 from mantis.core.config import MantisConfig
@@ -119,8 +119,6 @@ def run(args: argparse.Namespace) -> int:
         print("error: at least two --identity arguments are required", file=sys.stderr)
         return 2
 
-    identity_a, identity_b = identities[0], identities[1]
-
     try:
         config = _config_from_baseline(baseline)
     except ValueError as exc:
@@ -147,15 +145,16 @@ def run(args: argparse.Namespace) -> int:
 
     try:
         with MantisClient(config, log_writer=log_writer) as client:
-            all_findings.extend(
-                detect_bola(spec, client, config, identity_a, identity_b)
-            )
+            all_findings.extend(detect_bola(spec, client, config, identities).findings)
+            all_findings.extend(detect_bola_write(spec, client, config, identities).findings)
             if options.get("sequences"):
                 all_findings.extend(
-                    detect_bfla(spec, client, config, identity_a, identity_b)
+                    detect_bfla(spec, client, config, identities[0], identities[1:]).findings
                 )
                 all_findings.extend(
-                    detect_state_skip(spec, client, config, identity_a)
+                    detect_state_skip(
+                        spec, client, config, identities[1:], reset_identity=identities[0]
+                    ).findings
                 )
     except EvidenceWriteError as exc:
         print(f"error: request executed but evidence not saved: {exc}", file=sys.stderr)
