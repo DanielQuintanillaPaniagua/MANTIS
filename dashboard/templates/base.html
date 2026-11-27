@@ -32,23 +32,23 @@
 
             <nav class="sidebar-nav mt-4">
                 <a href="{% url 'core:home' %}"
-                    class="nav-item {% if request.resolver_match.url_name == 'home' %}active{% endif %}">
+                    class="nav-item {% if request.resolver_match.namespace == 'core' %}active{% endif %}">
                     <i class="bi bi-grid-1x2-fill"></i> Dashboard
                 </a>
                 <a href="{% url 'scans:list' %}"
-                    class="nav-item {% if request.resolver_match.url_name == 'list' %}active{% endif %}">
+                    class="nav-item {% if request.resolver_match.namespace == 'scans' and 'finding' not in request.resolver_match.url_name %}active{% endif %}">
                     <i class="bi bi-radar"></i> Scans
                 </a>
                 <a href="{% url 'scans:finding_list' %}"
-                    class="nav-item {% if 'finding' in request.resolver_match.url_name %}active{% endif %}">
+                    class="nav-item {% if request.resolver_match.namespace == 'scans' and 'finding' in request.resolver_match.url_name %}active{% endif %}">
                     <i class="bi bi-exclamation-triangle-fill"></i> Findings
                 </a>
                 <a href="{% url 'reports:list' %}"
-                    class="nav-item {% if 'report' in request.resolver_match.url_name %}active{% endif %}">
+                    class="nav-item {% if request.resolver_match.namespace == 'reports' %}active{% endif %}">
                     <i class="bi bi-file-earmark-bar-graph-fill"></i> Reports
                 </a>
                 <a href="{% url 'targets:list' %}"
-                    class="nav-item {% if 'target' in request.resolver_match.url_name %}active{% endif %}">
+                    class="nav-item {% if request.resolver_match.namespace == 'targets' %}active{% endif %}">
                     <i class="bi bi-crosshair"></i> Targets
                 </a>
             </nav>
